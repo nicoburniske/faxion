@@ -8,7 +8,7 @@ import com.sksamuel.scrimage.nio.JpegWriter
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val image = ImmutableImage.loader().fromFile("example/pants.jpeg")
+    val image   = ImmutableImage.loader().fromFile("example/fit1/pants.jpeg")
     val flipped = image.flipY()
     flipped.output(JpegWriter.Default, "flipped.jpeg")
   }
@@ -35,5 +35,4 @@ object Main {
       .map { s => s.substring(s.lastIndexOf(".") + 1) }
       .exists(IMAGE_EXT)
   }
-
 }
