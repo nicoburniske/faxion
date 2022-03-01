@@ -3,14 +3,14 @@ package nicoburniske.faxion.image
 import com.sksamuel.scrimage.ImmutableImage
 import nicoburniske.faxion.Article
 
-trait ImageClassifier[T] {
-  def classify(image: ImmutableImage): Option[T]
+trait ImageClassifier[F[_], T] {
+  def classify(image: ImmutableImage): F[T]
 }
 
-object Operation extends ImageClassifier[Article] {
+object Operation extends ImageClassifier[Option, Article] {
 
   /**
-   * Classifies the given image as subtype of Article [
+   * Classifies the given image as subtype of Article (Top, Bottom, Outerwear, Footwear)
    * @param image
    *   the image to classify
    * @return
