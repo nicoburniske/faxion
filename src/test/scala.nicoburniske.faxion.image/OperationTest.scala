@@ -1,3 +1,5 @@
+package scala.nicoburniske.faxion.image
+
 import com.sksamuel.scrimage.ImmutableImage
 import nicoburniske.faxion.Bottom
 import nicoburniske.faxion.image.Operation

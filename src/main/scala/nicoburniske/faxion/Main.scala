@@ -8,7 +8,7 @@ import com.sksamuel.scrimage.nio.JpegWriter
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val image = ImmutableImage.loader().fromFile("pants.jpeg")
+    val image = ImmutableImage.loader().fromFile("example/pants.jpeg")
     val flipped = image.flipY()
     flipped.output(JpegWriter.Default, "flipped.jpeg")
   }
