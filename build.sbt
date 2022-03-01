@@ -25,6 +25,8 @@ lazy val app         = (project in file(".")).settings(
     ++ Seq(
       "com.sksamuel.scrimage"  % "scrimage-core",
       "com.sksamuel.scrimage"  % "scrimage-filters",
+      "com.sksamuel.scrimage"  % "scrimage-formats-extra",
+      "com.sksamuel.scrimage"  % "scrimage-webp",
       "com.sksamuel.scrimage" %% "scrimage-scala"
     ).map(_ % scrimmageVersion)
 )
