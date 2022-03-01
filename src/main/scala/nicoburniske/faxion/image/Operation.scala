@@ -56,7 +56,14 @@ object Operation extends ImageClassifier[Article] {
     val histogram      = histogramFromImage(greyscaleImage)
     val intensitySum   = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
     val threshold      = calculateThreshold(histogram, image.width * image.height, intensitySum)
-    applyThreshold(image, threshold)
+
+    // Apply threshold.
+    image.map { pixel =>
+      if (pixelToIntensity(pixel) < threshold)
+        Color.BLACK
+      else
+        Color.WHITE
+    }
   }
 
   def histogramFromImage(image: ImmutableImage): Array[Int] = {
@@ -76,15 +83,13 @@ object Operation extends ImageClassifier[Article] {
     var meanForeground: Double = pixelCount * intensitySum
     var weightForeground       = pixelCount
 
-    var meanDifference = meanForeground - meanBackground
-    var variance       = weightBackground * weightForeground * Math.pow(meanDifference, 2)
-    var bestVariance   = Double.NegativeInfinity
+    var bestVariance = Double.NegativeInfinity
 
     var resultantThreshold = 0
 
     for (intensity <- 0 to 255) {
-      meanDifference = meanForeground - meanBackground
-      variance = weightBackground * weightForeground * Math.pow(meanDifference, 2)
+      val meanDifference  = meanForeground - meanBackground
+      val currentVariance = weightBackground * weightForeground * Math.pow(meanDifference, 2)
 
       meanBackground =
         (meanBackground * weightBackground + histogram(intensity) * intensity) / (weightBackground + histogram(intensity))
@@ -93,29 +98,18 @@ object Operation extends ImageClassifier[Article] {
       weightBackground = weightBackground + histogram(intensity)
       weightForeground = weightForeground - histogram(intensity)
 
-      if (variance > bestVariance) {
-        bestVariance = variance
+      if (currentVariance > bestVariance) {
+        bestVariance = currentVariance
         resultantThreshold = intensity
         println(intensity)
       }
-
     }
 
     println(resultantThreshold)
     resultantThreshold
-
   }
 
   def pixelToIntensity(pixel: Pixel): Int = {
     (pixel.red() + pixel.blue() + pixel.green()) / 3
-  }
-
-  def applyThreshold(image: ImmutableImage, threshold: Int): ImmutableImage = {
-    image.map { pixel =>
-      if (pixelToIntensity(pixel) < threshold)
-        Color.BLACK
-      else
-        Color.WHITE
-    }
   }
 }
