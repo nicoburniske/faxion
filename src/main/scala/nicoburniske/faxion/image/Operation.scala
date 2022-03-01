@@ -1,15 +1,11 @@
 package nicoburniske.faxion.image
 
+import java.awt.Color
+
 import com.sksamuel.scrimage.ImmutableImage
-import com.sksamuel.scrimage.color.{Grayscale, RGBColor}
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
-import jdk.jfr.Threshold
 import nicoburniske.faxion.Article
-import org.scalactic.One
-
-
-import java.awt.image.BufferedImage
 
 trait ImageClassifier[T] {
   def classify(image: ImmutableImage): Option[T]
@@ -18,15 +14,9 @@ trait ImageClassifier[T] {
 object Operation extends ImageClassifier[Article] {
 
   def main(args: Array[String]): Unit = {
-    val image   = ImmutableImage.loader().fromFile("example/fit1/pants.jpeg")
-
-   val histogram = histogramFromImage(rgbToGrayscale(image))
-    val threshold = calculateThreshold(histogram, image.width*image.height, intensitySumFromHistogram(histogram))
-
-    applyThreshold(image, threshold).output(JpegWriter.Default, "masked.jpeg")
-
-    //Threshold.applyThreshold()
-
+    val image = ImmutableImage.loader().fromFile("example/fit2/pants.jpg")
+    otsuBinarization(image).output(JpegWriter.Default, "masked.jpeg")
+    // Threshold.applyThreshold()
   }
 
   /**
@@ -54,67 +44,60 @@ object Operation extends ImageClassifier[Article] {
   def stitchImages(images: Seq[ImmutableImage]): ImmutableImage                    = ???
   def stitchImages(images: Array[ImmutableImage]): ImmutableImage                  = ???
 
-  //def otsuBinarization(image: ImmutableImage): ImmutableImage = {
+  def extractForeground(image: ImmutableImage): ImmutableImage = {
+    val otsu = otsuBinarization(image)
+    // TODO: finish
+    null
+  }
 
-    //var variance: Double
-    //var
-   // val top = 256
-    //val totalPixels = image.width*image.height
-
-  //}
-
-  def rgbToGrayscale(image: ImmutableImage): ImmutableImage = {
-    // Equal averaging of RGB values to Grayscale
+  def otsuBinarization(image: ImmutableImage): ImmutableImage = {
     // TODO: Perhaps change equal average to weighted average
-   image.map(pixel => pixel.toColor.toGrayscale().awt())
+    val greyscaleImage = image.map(pixel => pixel.toColor.toGrayscale.awt())
+    val histogram      = histogramFromImage(greyscaleImage)
+    val intensitySum   = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
+    val threshold      = calculateThreshold(histogram, image.width * image.height, intensitySum)
+    applyThreshold(image, threshold)
   }
 
   def histogramFromImage(image: ImmutableImage): Array[Int] = {
-    var intensityCounts = new Array[Int](256);
+    val intensityCounts = new Array[Int](256)
+    // image.pixels().map(pixelToIntensity).groupBy(identity).view.mapValues(_.length).toMap
     image.forEach { pixel =>
-      val pixelIntensity = (pixel.red() + pixel.blue() + pixel.green()) / 3;
+      val pixelIntensity = pixelToIntensity(pixel)
       intensityCounts(pixelIntensity) = intensityCounts(pixelIntensity) + 1
     }
     intensityCounts
   }
 
-  def intensitySumFromHistogram(histogram: Array[Int]): Int = {
-
-    var intensitySum = 0
-
-    for (i <- 0 to histogram.length-1) {
-      intensitySum = intensitySum + histogram(i)*i
-    }
-    intensitySum
-  }
-
-  def calculateThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int  = {
-    var meanBackground: Double = 0
+  def calculateThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int = {
+    var meanBackground: Double   = 0
     var weightBackground: Double = 0
 
-    var meanForeground: Double = pixelCount*intensitySum
-    var weightForeground = pixelCount
+    var meanForeground: Double = pixelCount * intensitySum
+    var weightForeground       = pixelCount
 
-    var meanDifference = meanForeground-meanBackground
-    var variance = weightBackground*weightForeground*Math.pow(meanDifference, 2)
-    var bestVariance = Double.NegativeInfinity
+    var meanDifference = meanForeground - meanBackground
+    var variance       = weightBackground * weightForeground * Math.pow(meanDifference, 2)
+    var bestVariance   = Double.NegativeInfinity
 
     var resultantThreshold = 0
 
     for (intensity <- 0 to 255) {
-      meanDifference = meanForeground-meanBackground
-      variance = weightBackground*weightForeground*Math.pow(meanDifference, 2)
+      meanDifference = meanForeground - meanBackground
+      variance = weightBackground * weightForeground * Math.pow(meanDifference, 2)
+
+      meanBackground =
+        (meanBackground * weightBackground + histogram(intensity) * intensity) / (weightBackground + histogram(intensity))
+      meanForeground =
+        (meanForeground * weightForeground - histogram(intensity) * intensity) / (weightForeground + histogram(intensity))
+      weightBackground = weightBackground + histogram(intensity)
+      weightForeground = weightForeground - histogram(intensity)
 
       if (variance > bestVariance) {
         bestVariance = variance
         resultantThreshold = intensity
         println(intensity)
       }
-
-      meanBackground = (meanBackground* weightBackground + histogram(intensity) * intensity) / (weightBackground + histogram(intensity))
-      meanForeground = (meanForeground* weightForeground - histogram(intensity) * intensity) / (weightForeground - histogram(intensity))
-      weightBackground = weightBackground + histogram(intensity)
-      weightForeground = weightForeground - histogram(intensity)
 
     }
 
@@ -123,14 +106,16 @@ object Operation extends ImageClassifier[Article] {
 
   }
 
+  def pixelToIntensity(pixel: Pixel): Int = {
+    (pixel.red() + pixel.blue() + pixel.green()) / 3
+  }
+
   def applyThreshold(image: ImmutableImage, threshold: Int): ImmutableImage = {
-    image.map(pixel => {
-      val pixelIntensity = (pixel.red()+pixel.blue()+pixel.green())/3;
-      if (pixelIntensity < threshold) {
-        new Grayscale(255).awt()
-      } else {
-        new Grayscale(0).awt()
-      }
-    })
+    image.map { pixel =>
+      if (pixelToIntensity(pixel) < threshold)
+        Color.BLACK
+      else
+        Color.WHITE
+    }
   }
 }
