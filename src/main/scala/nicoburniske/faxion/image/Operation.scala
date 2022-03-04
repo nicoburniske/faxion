@@ -1,10 +1,12 @@
 package nicoburniske.faxion.image
 
 import java.awt.Color
+
 import com.sksamuel.scrimage.ImmutableImage
-import com.sksamuel.scrimage.nio.{JpegWriter, PngWriter}
+import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
 import nicoburniske.faxion.Article
+
 import scala.annotation.tailrec
 
 trait ImageClassifier[T] {
@@ -14,36 +16,21 @@ trait ImageClassifier[T] {
 object Operation extends ImageClassifier[Article] {
 
   def main(args: Array[String]): Unit = {
-    val image = ImmutableImage.loader().fromFile("example/fit3/shirt.jpg")
-    image.map(pixel => pixel.toColor.toGrayscale.awt()).output(JpegWriter.Default, "gray.jpg")
+    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
+      .map(ImmutableImage.loader.fromFile(_))
 
-    val mask = otsuBinarization(image)
-    mask.output(JpegWriter.Default, "masked.jpg")
+    val combined = stitchImages(images)
 
-    val shirtImage     = ImmutableImage.loader().fromFile("example/fit1/polo.jpg")
-    val extractedShirt = extractForeground(shirtImage).autocrop(Color.WHITE)
-
-    val pantsImage     = ImmutableImage.loader().fromFile("example/fit3/pants.jpg")
-    val extractedPants = extractForeground(pantsImage).autocrop(Color.WHITE)
-
-    val maxWidth = Math.max(extractedShirt.width, extractedPants.width)
-    val height   = extractedShirt.height + extractedPants.height
-
-    val blankImage = ImmutableImage.create(maxWidth, height)
-
-    val blankImageWithShirt = blankImage.overlay(extractedShirt, (maxWidth - extractedShirt.width) / 2, 0)
-
-    val shirtAndPants = blankImageWithShirt.overlay(extractedPants, (maxWidth - extractedPants.width) / 2, extractedShirt.height)
-    shirtAndPants.output(JpegWriter.Default, "combined.jpg")
-
+    combined.output(JpegWriter.Default, "combined.jpg")
   }
 
   /**
    * Classifies the given image as subtype of Article [
+   *
    * @param image
-   *   the image to classify
+   * the image to classify
    * @return
-   *   None if the image could not be classified. The Article type otherwise.
+   * None if the image could not be classified. The Article type otherwise.
    */
   override def classify(image: ImmutableImage): Option[Article] = {
     None
@@ -55,13 +42,39 @@ object Operation extends ImageClassifier[Article] {
    * Stitch the images (of clothing articles) together to form a single "fit".
    *
    * @param images
-   *   the images of individual clothing articles
+   * the images of individual clothing articles
    * @return
-   *   an stitched image
+   * an stitched image
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
-  def stitchImages(images: Seq[ImmutableImage]): ImmutableImage                    = ???
-  def stitchImages(images: Array[ImmutableImage]): ImmutableImage                  = ???
+
+  def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
+    // @formatter:off
+    val maxWidth   = images.map(_.width).max
+    val height     = images.map(_.height).sum
+
+    @scala.annotation.tailrec
+    def overlayImages(background: ImmutableImage, toOverlay: List[ImmutableImage], height: Int = 0): ImmutableImage = {
+      toOverlay match {
+        case Nil => background
+        case ::(image, restImages) =>
+          val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
+          overlayImages(newBackground, restImages, height + image.height)
+      }
+    }
+
+    val processedImages = images
+      .map(extractForeground)
+      .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" ))
+      .map(_.autocrop(Color.WHITE))
+
+    val blankImage = ImmutableImage.create(maxWidth, height)
+    overlayImages(blankImage, processedImages.toList)
+    // @formatter:on
+  }
+
+
+  def stitchImages(images: Array[ImmutableImage]): ImmutableImage = ???
 
   def extractForeground(image: ImmutableImage): ImmutableImage = {
     otsuBinarization(image).map(pixel =>
@@ -76,9 +89,9 @@ object Operation extends ImageClassifier[Article] {
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
 
     val greyscaleImage = image.map(pixel => pixel.toColor.toGrayscale.awt())
-    val histogram      = histogramFromImage(greyscaleImage)
-    val intensitySum   = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
-    val threshold      = calculateThreshold(histogram, image.width * image.height, intensitySum)
+    val histogram = histogramFromImage(greyscaleImage)
+    val intensitySum = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
+    val threshold = calculateThreshold(histogram, image.width * image.height, intensitySum)
 
     // Apply threshold.
     image.map { pixel =>
@@ -99,18 +112,18 @@ object Operation extends ImageClassifier[Article] {
   }
 
   def calculateThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int = {
-    var meanBackground: Double   = 0
+    var meanBackground: Double = 0
     var weightBackground: Double = 0
 
     var meanForeground: Double = pixelCount * intensitySum
-    var weightForeground       = pixelCount
+    var weightForeground = pixelCount
 
     var bestVariance = Double.NegativeInfinity
 
     var resultantThreshold = 0
 
     for (intensity <- 0 to 255) {
-      val meanDifference  = meanForeground - meanBackground
+      val meanDifference = meanForeground - meanBackground
       val currentVariance = weightBackground * weightForeground * Math.pow(meanDifference, 2)
 
       meanBackground =
@@ -130,11 +143,12 @@ object Operation extends ImageClassifier[Article] {
   }
 
   case class LoopVariables(
-      weightBackground: Int,
-      weightForeground: Int,
-      cumulativeIntensitySum: Int,
-      maximumVariance: Double,
-      threshold: Int) {}
+                            weightBackground: Int,
+                            weightForeground: Int,
+                            cumulativeIntensitySum: Int,
+                            maximumVariance: Double,
+                            threshold: Int) {}
+
   object LoopVariables {
     def apply(): LoopVariables = new LoopVariables(0, 0, 0, Double.NegativeInfinity, 0)
   }
@@ -160,8 +174,8 @@ object Operation extends ImageClassifier[Article] {
             // val meanBackground = newCumulativeIntensitySum / newWeightBackground
             // val meanForeground = (intensitySum - newCumulativeIntensitySum) / newWeightForeground
             val meanBackground =
-              (newWeightBackground + histogram(currentIntensity) * currentIntensity) / (newWeightBackground + histogram(
-                currentIntensity))
+            (newWeightBackground + histogram(currentIntensity) * currentIntensity) / (newWeightBackground + histogram(
+              currentIntensity))
             val meanForeground =
               (newWeightForeground - histogram(currentIntensity) * currentIntensity) / (newWeightForeground + histogram(
                 currentIntensity))
@@ -193,7 +207,7 @@ object Operation extends ImageClassifier[Article] {
             }
 
           }
-        case Nil                                   => loopVariables.threshold
+        case Nil => loopVariables.threshold
       }
 
     }
