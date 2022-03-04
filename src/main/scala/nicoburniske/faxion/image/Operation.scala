@@ -5,15 +5,15 @@ import java.awt.Color
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
-import nicoburniske.faxion.Article
+import nicoburniske.faxion.model.Article
 
 import scala.annotation.tailrec
 
-trait ImageClassifier[T] {
-  def classify(image: ImmutableImage): Option[T]
+trait ImageClassifier[F[_], T] {
+  def classify(image: ImmutableImage): F[T]
 }
 
-object Operation extends ImageClassifier[Article] {
+object Operation extends ImageClassifier[Option, Article] {
 
   def main(args: Array[String]): Unit = {
     val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
@@ -47,7 +47,6 @@ object Operation extends ImageClassifier[Article] {
    * an stitched image
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
-
   def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
     // @formatter:off
     val maxWidth   = images.map(_.width).max
@@ -72,9 +71,6 @@ object Operation extends ImageClassifier[Article] {
     overlayImages(blankImage, processedImages.toList)
     // @formatter:on
   }
-
-
-  def stitchImages(images: Array[ImmutableImage]): ImmutableImage = ???
 
   def extractForeground(image: ImmutableImage): ImmutableImage = {
     otsuBinarization(image).map(pixel =>
@@ -219,5 +215,4 @@ object Operation extends ImageClassifier[Article] {
   def pixelToIntensity(pixel: Pixel): Int = {
     (pixel.red() + pixel.blue() + pixel.green()) / 3
   }
-
 }
