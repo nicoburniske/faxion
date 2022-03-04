@@ -1,4 +1,4 @@
-package nicoburniske.faxion
+package nicoburniske.faxion.model
 
 sealed trait Article
 

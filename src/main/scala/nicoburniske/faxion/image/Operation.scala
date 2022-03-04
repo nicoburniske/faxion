@@ -1,9 +1,9 @@
 package nicoburniske.faxion.image
 
 import com.sksamuel.scrimage.ImmutableImage
-import nicoburniske.faxion.Article
+import nicoburniske.faxion.model.Article
 
-trait ImageClassifier[F[_],T] {
+trait ImageClassifier[F[_], T] {
   def classify(image: ImmutableImage): F[T]
 }
 
