@@ -146,7 +146,7 @@ object Operation extends ImageClassifier[Option, Article] {
                             threshold: Int) {}
 
   object LoopVariables {
-    def apply(): LoopVariables = new LoopVariables(0, 0, 0, Double.NegativeInfinity, 0)
+    def apply(): LoopVariables = LoopVariables(0, 0, 0, Double.NegativeInfinity, 0)
   }
 
   def calcThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int = {
@@ -182,7 +182,7 @@ object Operation extends ImageClassifier[Option, Article] {
 
             if (variance > loopVariables.maximumVariance) {
 
-              val nextLoopVariables = LoopVariables.apply(
+              val nextLoopVariables = LoopVariables(
                 newWeightBackground,
                 newWeightForeground,
                 newCumulativeIntensitySum,
@@ -192,7 +192,7 @@ object Operation extends ImageClassifier[Option, Article] {
 
             } else {
 
-              val nextLoopVariables = LoopVariables.apply(
+              val nextLoopVariables = LoopVariables(
                 newWeightBackground,
                 newWeightForeground,
                 newCumulativeIntensitySum,
@@ -208,8 +208,7 @@ object Operation extends ImageClassifier[Option, Article] {
 
     }
 
-    continue(LoopVariables.apply(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
-
+    continue(LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
   }
 
   def pixelToIntensity(pixel: Pixel): Int = {
