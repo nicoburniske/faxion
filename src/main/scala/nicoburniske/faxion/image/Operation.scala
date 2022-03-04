@@ -14,14 +14,27 @@ trait ImageClassifier[T] {
 object Operation extends ImageClassifier[Article] {
 
   def main(args: Array[String]): Unit = {
-    val image = ImmutableImage.loader().fromFile("example/fit1/polo.jpg")
+    val image = ImmutableImage.loader().fromFile("example/fit3/shirt.jpg")
     image.map(pixel => pixel.toColor.toGrayscale.awt()).output(JpegWriter.Default, "gray.jpg")
 
     val mask = otsuBinarization(image)
     mask.output(JpegWriter.Default, "masked.jpg")
 
-    val extracted = extractForeground(image)
-    extracted.output(PngWriter.MinCompression, "extracted.png")
+    val shirtImage     = ImmutableImage.loader().fromFile("example/fit1/polo.jpg")
+    val extractedShirt = extractForeground(shirtImage).autocrop(Color.WHITE)
+
+    val pantsImage     = ImmutableImage.loader().fromFile("example/fit3/pants.jpg")
+    val extractedPants = extractForeground(pantsImage).autocrop(Color.WHITE)
+
+    val maxWidth = Math.max(extractedShirt.width, extractedPants.width)
+    val height   = extractedShirt.height + extractedPants.height
+
+    val blankImage = ImmutableImage.create(maxWidth, height)
+
+    val blankImageWithShirt = blankImage.overlay(extractedShirt, (maxWidth - extractedShirt.width) / 2, 0)
+
+    val shirtAndPants = blankImageWithShirt.overlay(extractedPants, (maxWidth - extractedPants.width) / 2, extractedShirt.height)
+    shirtAndPants.output(JpegWriter.Default, "combined.jpg")
 
   }
 
@@ -56,9 +69,8 @@ object Operation extends ImageClassifier[Article] {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
         // transparent pixel
-        new Color(0f, 0f, 0f, 1)
-      }
-    )
+        new Color(1f, 1f, 1f, 1)
+      })
   }
 
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
@@ -66,7 +78,7 @@ object Operation extends ImageClassifier[Article] {
     val greyscaleImage = image.map(pixel => pixel.toColor.toGrayscale.awt())
     val histogram      = histogramFromImage(greyscaleImage)
     val intensitySum   = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
-    val threshold      = calcThreshold(histogram, image.width * image.height, intensitySum)
+    val threshold      = calculateThreshold(histogram, image.width * image.height, intensitySum)
 
     // Apply threshold.
     image.map { pixel =>
@@ -145,9 +157,11 @@ object Operation extends ImageClassifier[Article] {
             val newCumulativeIntensitySum =
               loopVariables.cumulativeIntensitySum + (currentIntensity * histogram(currentIntensity))
 
-            val meanBackground = newCumulativeIntensitySum / newWeightBackground
+            // val meanBackground = newCumulativeIntensitySum / newWeightBackground
             // val meanForeground = (intensitySum - newCumulativeIntensitySum) / newWeightForeground
-            // val meanBackground = (newWeightBackground + histogram(currentIntensity) * currentIntensity) / (newWeightBackground + histogram(currentIntensity))
+            val meanBackground =
+              (newWeightBackground + histogram(currentIntensity) * currentIntensity) / (newWeightBackground + histogram(
+                currentIntensity))
             val meanForeground =
               (newWeightForeground - histogram(currentIntensity) * currentIntensity) / (newWeightForeground + histogram(
                 currentIntensity))
