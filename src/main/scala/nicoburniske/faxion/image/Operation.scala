@@ -65,14 +65,28 @@ object OperationF {
 }
 
 object Operation {
+  val DIMENSION = 3
+  val DEFAULT_MORPHOLOGY_SHAPE: Set[(Int, Int)] = {
+    val range = -DIMENSION to DIMENSION
+    for {
+      x <- range
+      y <- range
+    } yield (x, y)
+  }.toSet
 
   def main(args: Array[String]): Unit = {
     val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
       .map(ImmutableImage.loader.fromFile(_))
-
-    val combined = stitchImages(images)
-
-    combined.output(JpegWriter.Default, "combined.jpg")
+    val extracted = otsuBinarization(images(1))
+    extracted.output(JpegWriter.Default, "extracted.jpg")
+    val processed = erode(extracted)
+    processed.output(JpegWriter.Default, "eroded.jpg")
+    val full = extractForeground(images(1))
+    full.output(JpegWriter.Default, "full.jpg")
+    //
+    //    val combined = stitchImages(images)
+    //
+    //    combined.output(JpegWriter.Default, "combined.jpg")
   }
 
 
@@ -115,7 +129,8 @@ object Operation {
 
   def extractForeground(image: ImmutableImage): ImmutableImage = {
     val transparent = new Color(1f, 1f, 1f, 1)
-    otsuBinarization(image).map(pixel =>
+    val binarization = otsuBinarization(image)
+    erode(binarization).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
@@ -133,9 +148,9 @@ object Operation {
 
     // Apply threshold.
     image.map { pixel =>
-      if (pixelToIntensity(pixel) <= threshold)
+      if (pixelToIntensity(pixel) <= threshold) // Foreground
         Color.WHITE
-      else
+      else // Background.
         Color.BLACK
     }
   }
@@ -243,7 +258,6 @@ object Operation {
               continue(nextLoopVariables, nextIntensities)
 
             }
-
           }
         case Nil => loopVariables.threshold
       }
@@ -251,6 +265,34 @@ object Operation {
     }
 
     continue(LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
+  }
+
+  // Ensure image is grayscale.
+  // 0,0 is upper left.
+  def erode(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_MORPHOLOGY_SHAPE): ImmutableImage = {
+    def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
+      val l = a._1 + b._1
+      val r = a._2 + b._2
+      l -> r
+    }
+
+    val lifted: Int => Option[Pixel] = image.pixels().lift
+
+    def getPixel(p: (Int, Int)): Option[Pixel] = {
+      val (x, y) = p
+      lifted(y * image.width + x)
+    }
+
+    image.map { pixel =>
+      val coordinates = (pixel.x, pixel.y)
+      val shapeMatch = shape.map(addTuples(coordinates, _))
+        .flatMap(getPixel)
+        .forall(_.toColor.toAWT == Color.BLACK)
+      if (shapeMatch)
+        pixel.toColor.toAWT
+      else
+        Color.WHITE
+    }
   }
 
   def pixelToIntensity(pixel: Pixel): Int = {
