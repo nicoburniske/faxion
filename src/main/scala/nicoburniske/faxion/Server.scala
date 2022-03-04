@@ -6,6 +6,7 @@ import cats.{Applicative, Parallel}
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import fs2.{Chunk, Pipe, Stream}
+import nicoburniske.faxion.image.Operation
 import org.http4s.EntityDecoder.multipart
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.dsl.Http4sDsl
@@ -38,7 +39,7 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
           for {
             _        <- Async[F].delay(multipart.parts.map(_.toString).foreach(println))
             images   <- loadImages
-            stitched  = images.last // replace with Operation.stitchImages(images)
+            stitched  = Operation.stitchImages(images)
             bytes     = stitched.bytes(JpegWriter.Default)
             stream    = Stream.chunk(Chunk.array(bytes))
             response <- Ok("images stitched successfully")
@@ -51,8 +52,8 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
         val toClient: Stream[F, WebSocketFrame]       =
           Stream.awakeEvery[F](1.seconds).flatMap(d => Stream.apply(Text(s"Ping! $d"), Text(s"Yeet!")))
         val fromClient: Pipe[F, WebSocketFrame, Unit] = _.evalMap {
-          case Text(t, _) => Applicative[F].pure(println("response received " + t))
-          case _          => Applicative[F].pure(println("Received something else?!"))
+          case Text(t, _) => Async[F].delay(println("response received " + t))
+          case _          => Async[F].delay(println("Received something else?!"))
         }
         wsb.build(toClient, fromClient)
     }
