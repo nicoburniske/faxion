@@ -10,7 +10,6 @@ import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 
 object StitchImageTask extends IOApp {
-
   override def run(args: List[String]): IO[ExitCode] = {
     val pantsUrl = "https://cdn.fs.grailed.com/api/file/GhiQyKrS456JVwOYLnQD"
     loadImages(Seq(pantsUrl)).map(_.head).map(_.output(JpegWriter.Default, "test.jpeg")).as(ExitCode.Success)

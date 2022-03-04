@@ -2,6 +2,9 @@ package nicoburniske.faxion.image
 
 import java.awt.Color
 
+import cats.Parallel
+import cats.effect.Async
+import cats.syntax.all._
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
@@ -10,10 +13,58 @@ import nicoburniske.faxion.model.Article
 import scala.annotation.tailrec
 
 trait ImageClassifier[F[_], T] {
+  /**
+   * Classifies the given image as a T
+   *
+   * @param image
+   * the image to classify
+   * @return
+   * None if the image could not be classified. The Article type otherwise.
+   */
   def classify(image: ImmutableImage): F[T]
 }
 
-object Operation extends ImageClassifier[Option, Article] {
+class OperationF[F[_] : Async : Parallel] {
+  /**
+   * Stitch the images (of clothing articles) together to form a single "fit".
+   *
+   * @param images
+   * the images of individual clothing articles
+   * @return
+   * an stitched image
+   */
+  def stitchImages(images: Seq[F[ImmutableImage]]): F[ImmutableImage] = {
+    val processed: F[Seq[ImmutableImage]] = images.map {
+      _.map { image =>
+        val extracted = Operation.extractForeground(image)
+        extracted.autocrop(Color.black)
+      }
+    }.parSequence
+
+    for {
+      images <- processed
+      maxWidth = images.map(_.width).max
+      height = images.map(_.height).sum
+      blankImage = ImmutableImage.create(maxWidth, height)
+    } yield overlayImages(maxWidth, blankImage, images.toList)
+  }
+
+  @scala.annotation.tailrec
+  private def overlayImages(maxWidth: Int, background: ImmutableImage, toOverlay: List[ImmutableImage], height: Int = 0): ImmutableImage = {
+    toOverlay match {
+      case Nil => background
+      case ::(image, restImages) =>
+        val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
+        overlayImages(maxWidth, newBackground, restImages, height + image.height)
+    }
+  }
+}
+
+object OperationF {
+  def apply[F[_] : Async : Parallel]: OperationF[F] = new OperationF[F]
+}
+
+object Operation {
 
   def main(args: Array[String]): Unit = {
     val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
@@ -24,17 +75,6 @@ object Operation extends ImageClassifier[Option, Article] {
     combined.output(JpegWriter.Default, "combined.jpg")
   }
 
-  /**
-   * Classifies the given image as subtype of Article [
-   *
-   * @param image
-   * the image to classify
-   * @return
-   * None if the image could not be classified. The Article type otherwise.
-   */
-  override def classify(image: ImmutableImage): Option[Article] = {
-    None
-  }
 
   // TODO: Decide whether mutability has significant performance improvements.
   // TODO: Py implement
@@ -47,6 +87,7 @@ object Operation extends ImageClassifier[Option, Article] {
    * an stitched image
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
+
   def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
     // @formatter:off
     val maxWidth   = images.map(_.width).max
@@ -64,7 +105,7 @@ object Operation extends ImageClassifier[Option, Article] {
 
     val processedImages = images
       .map(extractForeground)
-      .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" ))
+      // .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" )) // For debugging.
       .map(_.autocrop(Color.BLACK))
 
     val blankImage = ImmutableImage.create(maxWidth, height)
@@ -73,12 +114,13 @@ object Operation extends ImageClassifier[Option, Article] {
   }
 
   def extractForeground(image: ImmutableImage): ImmutableImage = {
+    val transparent = new Color(1f, 1f, 1f, 1)
     otsuBinarization(image).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
         // transparent pixel
-        new Color(1f, 1f, 1f, 1)
+        transparent
       })
   }
 
