@@ -66,7 +66,7 @@ object Operation extends ImageClassifier[Article] {
     val processedImages = images
       .map(extractForeground)
       .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" ))
-      .map(_.autocrop(Color.WHITE))
+      .map(_.autocrop(Color.BLACK))
 
     val blankImage = ImmutableImage.create(maxWidth, height)
     overlayImages(blankImage, processedImages.toList)
