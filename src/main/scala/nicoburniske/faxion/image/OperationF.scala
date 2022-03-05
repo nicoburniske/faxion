@@ -21,7 +21,7 @@ class OperationF[F[_]: Async: Parallel] {
     val processed: F[Seq[ImmutableImage]] = images.map {
       _.map { image =>
         val extracted = Operation.extractForeground(image)
-        extracted.autocrop(Color.black)
+        extracted.autocrop()
       }
     }.parSequence
 

@@ -79,7 +79,7 @@ object Operation {
     val processedImages = images
       .map(extractForeground(_))
       // .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" )) // For debugging.
-      .map(_.autocrop(Color.BLACK))
+      .map(_.autocrop)
 
     val blankImage = ImmutableImage.create(maxWidth, height)
     overlayImages(blankImage, processedImages.toList)

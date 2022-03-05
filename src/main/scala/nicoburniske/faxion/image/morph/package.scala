@@ -1,7 +1,7 @@
 package nicoburniske.faxion.image
 
 package object morph {
-  val DIMENSION = 5
+  val DIMENSION = 2
 
   val DEFAULT_STRUCTURING_ELEMENT: Set[(Int, Int)] = {
     val range = -DIMENSION to DIMENSION
