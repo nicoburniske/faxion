@@ -1,37 +1,41 @@
 package nicoburniske.faxion.image
 
-import java.awt.Color
-
+import java.awt.{Color, Image, Toolkit}
 import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
+import jdk.jfr.Threshold
 import nicoburniske.faxion.model.Article
 
+import java.awt.image.{BufferedImage, FilteredImageSource, ImageFilter}
+import javax.swing.GrayFilter
 import scala.annotation.tailrec
 
 trait ImageClassifier[F[_], T] {
+
   /**
    * Classifies the given image as a T
    *
    * @param image
-   * the image to classify
+   *   the image to classify
    * @return
-   * None if the image could not be classified. The Article type otherwise.
+   *   None if the image could not be classified. The Article type otherwise.
    */
   def classify(image: ImmutableImage): F[T]
 }
 
-class OperationF[F[_] : Async : Parallel] {
+class OperationF[F[_]: Async: Parallel] {
+
   /**
    * Stitch the images (of clothing articles) together to form a single "fit".
    *
    * @param images
-   * the images of individual clothing articles
+   *   the images of individual clothing articles
    * @return
-   * an stitched image
+   *   an stitched image
    */
   def stitchImages(images: Seq[F[ImmutableImage]]): F[ImmutableImage] = {
     val processed: F[Seq[ImmutableImage]] = images.map {
@@ -42,17 +46,21 @@ class OperationF[F[_] : Async : Parallel] {
     }.parSequence
 
     for {
-      images <- processed
-      maxWidth = images.map(_.width).max
-      height = images.map(_.height).sum
+      images    <- processed
+      maxWidth   = images.map(_.width).max
+      height     = images.map(_.height).sum
       blankImage = ImmutableImage.create(maxWidth, height)
     } yield overlayImages(maxWidth, blankImage, images.toList)
   }
 
   @scala.annotation.tailrec
-  private def overlayImages(maxWidth: Int, background: ImmutableImage, toOverlay: List[ImmutableImage], height: Int = 0): ImmutableImage = {
+  private def overlayImages(
+      maxWidth: Int,
+      background: ImmutableImage,
+      toOverlay: List[ImmutableImage],
+      height: Int = 0): ImmutableImage = {
     toOverlay match {
-      case Nil => background
+      case Nil                   => background
       case ::(image, restImages) =>
         val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
         overlayImages(maxWidth, newBackground, restImages, height + image.height)
@@ -61,11 +69,11 @@ class OperationF[F[_] : Async : Parallel] {
 }
 
 object OperationF {
-  def apply[F[_] : Async : Parallel]: OperationF[F] = new OperationF[F]
+  def apply[F[_]: Async: Parallel]: OperationF[F] = new OperationF[F]
 }
 
 object Operation {
-  val DIMENSION = 3
+  val DIMENSION                                 = 3
   val DEFAULT_MORPHOLOGY_SHAPE: Set[(Int, Int)] = {
     val range = -DIMENSION to DIMENSION
     for {
@@ -75,20 +83,19 @@ object Operation {
   }.toSet
 
   def main(args: Array[String]): Unit = {
-    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
-      .map(ImmutableImage.loader.fromFile(_))
+    val images    =
+      Seq("example/fit3/shirt.jpg", "example/fit1/white.jpg").map(ImmutableImage.loader.fromFile(_))
     val extracted = otsuBinarization(images(1))
     extracted.output(JpegWriter.Default, "extracted.jpg")
-    val processed = erode(extracted)
-    processed.output(JpegWriter.Default, "eroded.jpg")
-    val full = extractForeground(images(1))
-    full.output(JpegWriter.Default, "full.jpg")
+    // val processed = erode(extracted)
+    // processed.output(JpegWriter.Default, "eroded.jpg")
+    // val full      = extractForeground(images(1))
+    // full.output(JpegWriter.Default, "full.jpg")
     //
     //    val combined = stitchImages(images)
     //
     //    combined.output(JpegWriter.Default, "combined.jpg")
   }
-
 
   // TODO: Decide whether mutability has significant performance improvements.
   // TODO: Py implement
@@ -96,9 +103,9 @@ object Operation {
    * Stitch the images (of clothing articles) together to form a single "fit".
    *
    * @param images
-   * the images of individual clothing articles
+   *   the images of individual clothing articles
    * @return
-   * an stitched image
+   *   an stitched image
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
 
@@ -128,7 +135,7 @@ object Operation {
   }
 
   def extractForeground(image: ImmutableImage): ImmutableImage = {
-    val transparent = new Color(1f, 1f, 1f, 1)
+    val transparent  = new Color(1f, 1f, 1f, 1)
     val binarization = otsuBinarization(image)
     erode(binarization).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
@@ -141,18 +148,21 @@ object Operation {
 
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
 
-    val greyscaleImage = image.map(pixel => pixel.toColor.toGrayscale.awt())
-    val histogram = histogramFromImage(greyscaleImage)
-    val intensitySum = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
-    val threshold = calculateThreshold(histogram, image.width * image.height, intensitySum)
+    val histogram      = histogramFromImage(image)
+
+    val intensitySum = histogram.zipWithIndex.map { case (value, index) => value * intensityToDouble(index) }.sum
+    val threshold    = calcThreshold(histogram, image.width * image.height, intensitySum)
+
+    val intThreshold = (threshold*256).toInt
 
     // Apply threshold.
     image.map { pixel =>
-      if (pixelToIntensity(pixel) <= threshold) // Foreground
+      if (pixelToIntensity(pixel) > intThreshold) // Foreground
         Color.WHITE
-      else // Background.
+      else                               // Background.
         Color.BLACK
     }
+
   }
 
   def histogramFromImage(image: ImmutableImage): Array[Int] = {
@@ -164,107 +174,61 @@ object Operation {
     intensityCounts
   }
 
-  def calculateThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int = {
-    var meanBackground: Double = 0
-    var weightBackground: Double = 0
-
-    var meanForeground: Double = pixelCount * intensitySum
-    var weightForeground = pixelCount
-
-    var bestVariance = Double.NegativeInfinity
-
-    var resultantThreshold = 0
-
-    for (intensity <- 0 to 255) {
-      val meanDifference = meanForeground - meanBackground
-      val currentVariance = weightBackground * weightForeground * Math.pow(meanDifference, 2)
-
-      meanBackground =
-        (meanBackground * weightBackground + histogram(intensity) * intensity) / (weightBackground + histogram(intensity))
-      meanForeground =
-        (meanForeground * weightForeground - histogram(intensity) * intensity) / (weightForeground + histogram(intensity))
-      weightBackground = weightBackground + histogram(intensity)
-      weightForeground = weightForeground - histogram(intensity)
-
-      if (currentVariance > bestVariance) {
-        bestVariance = currentVariance
-        resultantThreshold = intensity
-      }
-    }
-
-    resultantThreshold
-  }
-
   case class LoopVariables(
-                            weightBackground: Int,
-                            weightForeground: Int,
-                            cumulativeIntensitySum: Int,
-                            maximumVariance: Double,
-                            threshold: Int) {}
+      weightBackground: Double,
+      weightForeground: Double,
+      cumulativeIntensitySum: Double,
+      maximumVariance: Double,
+      threshold: Double) {}
 
   object LoopVariables {
-    def apply(): LoopVariables = LoopVariables(0, 0, 0, Double.NegativeInfinity, 0)
+    def apply(): LoopVariables = LoopVariables(0, 0, 0, Double.NegativeInfinity, 0.0)
   }
 
-  def calcThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Int): Int = {
+  def calcThreshold(histogram: Array[Int], pixelCount: Int, intensitySum: Double): Double = {
 
     @tailrec
-    def continue(loopVariables: LoopVariables, intensities: List[Int]): Int = {
+    def continue(loopVariables: LoopVariables, intensities: List[Int]): Double = {
       intensities match {
         case ::(currentIntensity, nextIntensities) =>
-          val newWeightBackground = loopVariables.weightBackground + histogram(currentIntensity)
-          val newWeightForeground = loopVariables.weightForeground - newWeightBackground
+          val newWeightForeground = pixelCount - loopVariables.weightBackground
 
-          if (newWeightBackground == 0) {
-            continue(loopVariables.copy(weightBackground = newWeightBackground), nextIntensities)
-          } else if (newWeightForeground == 0) {
-            loopVariables.threshold
-          } else {
+          var newMaximumVariance = loopVariables.maximumVariance
+          var newThreshold       = loopVariables.threshold
+          if (loopVariables.weightBackground > 0 && newWeightForeground > 0) {
 
-            val newCumulativeIntensitySum =
-              loopVariables.cumulativeIntensitySum + (currentIntensity * histogram(currentIntensity))
+            val meanForeground = (intensitySum - loopVariables.cumulativeIntensitySum) / newWeightForeground
 
-            // val meanBackground = newCumulativeIntensitySum / newWeightBackground
-            // val meanForeground = (intensitySum - newCumulativeIntensitySum) / newWeightForeground
-            val meanBackground =
-            (newWeightBackground + histogram(currentIntensity) * currentIntensity) / (newWeightBackground + histogram(
-              currentIntensity))
-            val meanForeground =
-              (newWeightForeground - histogram(currentIntensity) * currentIntensity) / (newWeightForeground + histogram(
-                currentIntensity))
-
-            val meanDifference = meanBackground - meanForeground
-
-            val variance = newWeightBackground * newWeightForeground * Math.pow(meanDifference, 2)
-
-            if (variance > loopVariables.maximumVariance) {
-
-              val nextLoopVariables = LoopVariables(
-                newWeightBackground,
-                newWeightForeground,
-                newCumulativeIntensitySum,
-                variance,
-                currentIntensity)
-              continue(nextLoopVariables, nextIntensities)
-
-            } else {
-
-              val nextLoopVariables = LoopVariables(
-                newWeightBackground,
-                newWeightForeground,
-                newCumulativeIntensitySum,
-                loopVariables.maximumVariance,
-                loopVariables.threshold)
-              continue(nextLoopVariables, nextIntensities)
-
+            val variance =
+              loopVariables.weightBackground * newWeightForeground * ((loopVariables.cumulativeIntensitySum / loopVariables.weightBackground) - meanForeground) * ((loopVariables.cumulativeIntensitySum / loopVariables.weightBackground) - meanForeground)
+            if (variance >= loopVariables.maximumVariance) {
+              newThreshold = intensityToDouble(currentIntensity)
+              newMaximumVariance = variance
             }
+
           }
+          val newWeightBackground       =
+            loopVariables.weightBackground + histogram(currentIntensity)
+          val newCumulativeIntensitySum =
+            loopVariables.cumulativeIntensitySum + (intensityToDouble(currentIntensity) * (
+              histogram(currentIntensity)))
+
+          val nextLoopVariables = LoopVariables(
+            newWeightBackground,
+            newWeightForeground,
+            newCumulativeIntensitySum,
+            newMaximumVariance,
+            newThreshold)
+          continue(nextLoopVariables, nextIntensities)
+
         case Nil => loopVariables.threshold
       }
 
     }
 
-    continue(LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
+    continue(
+      LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0),
+      (0 until 256).toList)
   }
 
   // Ensure image is grayscale.
@@ -285,9 +249,8 @@ object Operation {
 
     image.map { pixel =>
       val coordinates = (pixel.x, pixel.y)
-      val shapeMatch = shape.map(addTuples(coordinates, _))
-        .flatMap(getPixel)
-        .forall(_.toColor.toAWT == Color.BLACK)
+      val shapeMatch  =
+        shape.map(addTuples(coordinates, _)).flatMap(getPixel).forall(_.toColor.toAWT == Color.BLACK)
       if (shapeMatch)
         pixel.toColor.toAWT
       else
@@ -296,6 +259,20 @@ object Operation {
   }
 
   def pixelToIntensity(pixel: Pixel): Int = {
-    (pixel.red() + pixel.blue() + pixel.green()) / 3
+    (pixel.red()/3 + pixel.blue()/3 + pixel.green()/3)
   }
+
+  def intensityToDouble(intensity: Int): Double = {
+    val doub: Double = intensity / 255.0;
+    doub
+  }
+
+  def toGreyscale(image: ImmutableImage): ImmutableImage = {
+
+    val g2 = image.toNewBufferedImage(BufferedImage.TYPE_INT_RGB)
+
+    ImmutableImage.fromAwt(g2)
+
+  }
+
 }
