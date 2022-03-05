@@ -1,21 +1,22 @@
 package nicoburniske.faxion.image
 
-import java.awt.{Color, Image, Toolkit}
-import cats.Parallel
-import cats.effect.Async
-import cats.syntax.all._
+import java.awt.Color
+
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
 import jdk.jfr.Threshold
 import nicoburniske.faxion.model.Article
-
 import java.awt.image.{BufferedImage, FilteredImageSource, ImageFilter}
+
+import cats.Parallel
+import cats.effect.Async
+import cats.syntax.all._
 import javax.swing.GrayFilter
+
 import scala.annotation.tailrec
 
 trait ImageClassifier[F[_], T] {
-
   /**
    * Classifies the given image as a T
    *
@@ -83,19 +84,20 @@ object Operation {
   }.toSet
 
   def main(args: Array[String]): Unit = {
-    val images    =
-      Seq("example/fit3/shirt.jpg", "example/fit3/pants.jpg").map(ImmutableImage.loader.fromFile(_))
+    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
+      .map(ImmutableImage.loader.fromFile(_))
     val extracted = otsuBinarization(images(1))
     extracted.output(JpegWriter.Default, "extracted.jpg")
-    // val processed = erode(extracted)
-    // processed.output(JpegWriter.Default, "eroded.jpg")
-    // val full      = extractForeground(images(1))
-    // full.output(JpegWriter.Default, "full.jpg")
+    val processed = erode(extracted)
+    processed.output(JpegWriter.Default, "eroded.jpg")
+    val full = extractForeground(images(1))
+    full.output(JpegWriter.Default, "full.jpg")
     //
     //    val combined = stitchImages(images)
     //
     //    combined.output(JpegWriter.Default, "combined.jpg")
   }
+
 
   // TODO: Decide whether mutability has significant performance improvements.
   // TODO: Py implement
@@ -109,6 +111,14 @@ object Operation {
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
 
+  /**
+   * Stitch the images (of clothing articles) together to form a single "fit".
+   *
+   * @param images
+   * the images of individual clothing articles
+   * @return
+   * an stitched image
+   */
   def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
     // @formatter:off
     val maxWidth   = images.map(_.width).max
@@ -125,19 +135,20 @@ object Operation {
     }
 
     val processedImages = images
-      .map(extractForeground)
+      .map(extractForeground(_))
       // .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" )) // For debugging.
-      .map(_.autocrop(Color.BLACK))
+      .map(_.autocrop)
 
     val blankImage = ImmutableImage.create(maxWidth, height)
     overlayImages(blankImage, processedImages.toList)
     // @formatter:on
   }
 
-  def extractForeground(image: ImmutableImage): ImmutableImage = {
-    val transparent  = new Color(1f, 1f, 1f, 1)
-    val binarization = otsuBinarization(image)
-    erode(binarization).map(pixel =>
+  def extractForeground(image: ImmutableImage, scaleFactor: Double = 2.0): ImmutableImage = {
+    assert(scaleFactor > 0)
+    val transparent = new Color(1f, 1f, 1f, 1)
+    val binarization = otsuBinarization(image).scale(1 / scaleFactor)
+    Morph.dilate(binarization).scale(scaleFactor).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
@@ -156,7 +167,7 @@ object Operation {
     val initialResult = image.map { pixel =>
       if (pixelToIntensity(pixel) > intThreshold) // Foreground
         Color.WHITE
-      else                               // Background.
+      else // Background.
         Color.BLACK
     }
 
@@ -249,40 +260,13 @@ object Operation {
       (0 until 256).toList)
   }
 
-  // Ensure image is grayscale.
-  // 0,0 is upper left.
-  def erode(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_MORPHOLOGY_SHAPE): ImmutableImage = {
-    def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
-      val l = a._1 + b._1
-      val r = a._2 + b._2
-      l -> r
-    }
-
-    val lifted: Int => Option[Pixel] = image.pixels().lift
-
-    def getPixel(p: (Int, Int)): Option[Pixel] = {
-      val (x, y) = p
-      lifted(y * image.width + x)
-    }
-
-    image.map { pixel =>
-      val coordinates = (pixel.x, pixel.y)
-      val shapeMatch  =
-        shape.map(addTuples(coordinates, _)).flatMap(getPixel).forall(_.toColor.toAWT == Color.BLACK)
-      if (shapeMatch)
-        pixel.toColor.toAWT
-      else
-        Color.WHITE
-    }
-  }
 
   def pixelToIntensity(pixel: Pixel): Int = {
-    (pixel.red()/3 + pixel.blue()/3 + pixel.green()/3)
+    (pixel.red() + pixel.blue() + pixel.green()) / 3
   }
 
   def intensityToDouble(intensity: Int): Double = {
-    val doub: Double = intensity / 255.0;
-    doub
+     intensity / 255.0
   }
 
 }
