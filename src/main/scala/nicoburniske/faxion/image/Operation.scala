@@ -65,7 +65,7 @@ object OperationF {
 }
 
 object Operation {
-  val DIMENSION = 3
+  val DIMENSION = 2
   val DEFAULT_MORPHOLOGY_SHAPE: Set[(Int, Int)] = {
     val range = -DIMENSION to DIMENSION
     for {
@@ -75,12 +75,12 @@ object Operation {
   }.toSet
 
   def main(args: Array[String]): Unit = {
-    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg")
+    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg", "example/fit3/shirt.jpg")
       .map(ImmutableImage.loader.fromFile(_))
     val extracted = otsuBinarization(images(1))
     extracted.output(JpegWriter.Default, "extracted.jpg")
-    val processed = erode(extracted)
-    processed.output(JpegWriter.Default, "eroded.jpg")
+    val processed = dilate(extracted)
+    processed.output(JpegWriter.Default, "dilated.jpg")
     val full = extractForeground(images(1))
     full.output(JpegWriter.Default, "full.jpg")
     //
@@ -102,6 +102,14 @@ object Operation {
    */
   def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
 
+  /**
+   * Stitch the images (of clothing articles) together to form a single "fit".
+   *
+   * @param images
+   * the images of individual clothing articles
+   * @return
+   * an stitched image
+   */
   def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
     // @formatter:off
     val maxWidth   = images.map(_.width).max
@@ -118,7 +126,7 @@ object Operation {
     }
 
     val processedImages = images
-      .map(extractForeground)
+      .map(extractForeground(_))
       // .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" )) // For debugging.
       .map(_.autocrop(Color.BLACK))
 
@@ -127,10 +135,11 @@ object Operation {
     // @formatter:on
   }
 
-  def extractForeground(image: ImmutableImage): ImmutableImage = {
+  def extractForeground(image: ImmutableImage, scaleFactor: Double = 2.0): ImmutableImage = {
+    assert(scaleFactor > 0)
     val transparent = new Color(1f, 1f, 1f, 1)
-    val binarization = otsuBinarization(image)
-    erode(binarization).map(pixel =>
+    val binarization = otsuBinarization(image).scale(1 / scaleFactor)
+    dilate(binarization).scale(scaleFactor).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
@@ -140,7 +149,6 @@ object Operation {
   }
 
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
-
     val greyscaleImage = image.map(pixel => pixel.toColor.toGrayscale.awt())
     val histogram = histogramFromImage(greyscaleImage)
     val intensitySum = histogram.zipWithIndex.map { case (value, index) => value * index }.sum
@@ -148,10 +156,12 @@ object Operation {
 
     // Apply threshold.
     image.map { pixel =>
-      if (pixelToIntensity(pixel) <= threshold) // Foreground
+      // Foreground.
+      if (pixelToIntensity(pixel) <= threshold)
         Color.WHITE
-      else // Background.
-        Color.BLACK
+      // Background.
+      else
+      Color.BLACK
     }
   }
 
@@ -267,29 +277,39 @@ object Operation {
     continue(LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
   }
 
-  // Ensure image is grayscale.
-  // 0,0 is upper left.
-  def erode(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_MORPHOLOGY_SHAPE): ImmutableImage = {
+  /**
+   * Ensure image is grayscale. Dilates image by the structuring element.
+   *
+   * @param image the image to dilate morphologically
+   * @param shape the structuring element
+   * @return the dilated image
+   */
+  def dilate(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_MORPHOLOGY_SHAPE): ImmutableImage = {
+    val colors = image.pixels().map(_.toColor.toAWT)
+    val lifted: Int => Option[Color] = colors.lift
+
+    def getColor(p: (Int, Int)): Option[Color] = {
+      val (x, y) = p
+      lifted(y * image.width + x)
+    }
+
     def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
       val l = a._1 + b._1
       val r = a._2 + b._2
       l -> r
     }
 
-    val lifted: Int => Option[Pixel] = image.pixels().lift
-
-    def getPixel(p: (Int, Int)): Option[Pixel] = {
-      val (x, y) = p
-      lifted(y * image.width + x)
-    }
-
     image.map { pixel =>
+
+      /**
+       * If there is a spot in the entity that is the background color (BLACK), convert it to white.
+       */
       val coordinates = (pixel.x, pixel.y)
-      val shapeMatch = shape.map(addTuples(coordinates, _))
-        .flatMap(getPixel)
-        .forall(_.toColor.toAWT == Color.BLACK)
-      if (shapeMatch)
-        pixel.toColor.toAWT
+      val isBackground = shape.map(addTuples(coordinates, _))
+        .flatMap(getColor)
+        .forall(_ == Color.BLACK)
+      if (isBackground)
+        Color.BLACK
       else
         Color.WHITE
     }
