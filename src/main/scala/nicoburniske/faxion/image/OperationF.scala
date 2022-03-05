@@ -1,7 +1,5 @@
 package nicoburniske.faxion.image
 
-import java.awt.Color
-
 import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
