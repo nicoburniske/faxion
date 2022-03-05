@@ -67,13 +67,14 @@ object Operation {
     assert(scaleFactor > 0)
     val transparent  = new Color(1f, 1f, 1f, 1)
     val binarization = otsuBinarization(image).scale(1 / scaleFactor)
-    println("1")
+    val threadName   = Thread.currentThread.getName
+    println(s"$threadName-1")
     val processed    = Morph.erode(binarization)
-    println("2")
+    println(s"$threadName-2")
     val processed2   = Morph.dilate(processed)
-    println("3")
+    println(s"$threadName-3")
     val processed3   = Morph.dilate(processed2)
-    println("4")
+    println(s"$threadName-4")
     val processed4   = Morph.erode(processed3)
     processed4
       .scale(scaleFactor)
