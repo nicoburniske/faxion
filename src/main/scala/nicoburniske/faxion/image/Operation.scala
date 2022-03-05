@@ -84,7 +84,7 @@ object Operation {
 
   def main(args: Array[String]): Unit = {
     val images    =
-      Seq("example/fit3/shirt.jpg", "example/fit1/white.jpg").map(ImmutableImage.loader.fromFile(_))
+      Seq("example/fit3/shirt.jpg", "example/fit3/pants.jpg").map(ImmutableImage.loader.fromFile(_))
     val extracted = otsuBinarization(images(1))
     extracted.output(JpegWriter.Default, "extracted.jpg")
     // val processed = erode(extracted)
@@ -149,18 +149,36 @@ object Operation {
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
 
     val histogram      = histogramFromImage(image)
-
     val intensitySum = histogram.zipWithIndex.map { case (value, index) => value * intensityToDouble(index) }.sum
     val threshold    = calcThreshold(histogram, image.width * image.height, intensitySum)
-
     val intThreshold = (threshold*256).toInt
 
-    // Apply threshold.
-    image.map { pixel =>
+    val initialResult = image.map { pixel =>
       if (pixelToIntensity(pixel) > intThreshold) // Foreground
         Color.WHITE
       else                               // Background.
         Color.BLACK
+    }
+
+    // Calculate a quarter-sized sub-image, centered around the original image's center
+    // Set the foreground (white) to whatever group has majority values of the sub-image
+
+    val resultSubimage = initialResult.subimage(image.width/4, image.width/4, image.width/2, image.height/2)
+
+    val whiteCount = resultSubimage.pixels().count(_.toColor.awt() == Color.WHITE)
+
+    if (whiteCount < (resultSubimage.width*resultSubimage.height)-whiteCount){
+      initialResult.map(pixel => {
+        if (pixel.toColor.awt() == Color.WHITE) {
+          Color.BLACK
+        } else {
+          Color.WHITE
+        }
+
+      })
+
+    } else {
+      initialResult
     }
 
   }
@@ -265,14 +283,6 @@ object Operation {
   def intensityToDouble(intensity: Int): Double = {
     val doub: Double = intensity / 255.0;
     doub
-  }
-
-  def toGreyscale(image: ImmutableImage): ImmutableImage = {
-
-    val g2 = image.toNewBufferedImage(BufferedImage.TYPE_INT_RGB)
-
-    ImmutableImage.fromAwt(g2)
-
   }
 
 }
