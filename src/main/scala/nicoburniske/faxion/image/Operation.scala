@@ -2,12 +2,10 @@ package nicoburniske.faxion.image
 
 import java.awt.Color
 
-import cats.Parallel
-import cats.effect.Async
-import cats.syntax.all._
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
+import nicoburniske.faxion.image.morph.Morph
 import nicoburniske.faxion.model.Article
 
 import scala.annotation.tailrec
@@ -24,65 +22,18 @@ trait ImageClassifier[F[_], T] {
   def classify(image: ImmutableImage): F[T]
 }
 
-class OperationF[F[_] : Async : Parallel] {
-  /**
-   * Stitch the images (of clothing articles) together to form a single "fit".
-   *
-   * @param images
-   * the images of individual clothing articles
-   * @return
-   * an stitched image
-   */
-  def stitchImages(images: Seq[F[ImmutableImage]]): F[ImmutableImage] = {
-    val processed: F[Seq[ImmutableImage]] = images.map {
-      _.map { image =>
-        val extracted = Operation.extractForeground(image)
-        extracted.autocrop(Color.black)
-      }
-    }.parSequence
-
-    for {
-      images <- processed
-      maxWidth = images.map(_.width).max
-      height = images.map(_.height).sum
-      blankImage = ImmutableImage.create(maxWidth, height)
-    } yield overlayImages(maxWidth, blankImage, images.toList)
-  }
-
-  @scala.annotation.tailrec
-  private def overlayImages(maxWidth: Int, background: ImmutableImage, toOverlay: List[ImmutableImage], height: Int = 0): ImmutableImage = {
-    toOverlay match {
-      case Nil => background
-      case ::(image, restImages) =>
-        val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
-        overlayImages(maxWidth, newBackground, restImages, height + image.height)
-    }
-  }
-}
-
-object OperationF {
-  def apply[F[_] : Async : Parallel]: OperationF[F] = new OperationF[F]
-}
 
 object Operation {
-  val DIMENSION = 2
-  val DEFAULT_MORPHOLOGY_SHAPE: Set[(Int, Int)] = {
-    val range = -DIMENSION to DIMENSION
-    for {
-      x <- range
-      y <- range
-    } yield (x, y)
-  }.toSet
 
   def main(args: Array[String]): Unit = {
-    val images = Seq("example/fit1/poloSport.jpg", "example/fit1/pants.jpg", "example/fit3/shirt.jpg")
+    val images = Seq("example/fit1/shirt.jpg", "example/fit3/pants.jpg")
       .map(ImmutableImage.loader.fromFile(_))
-    val extracted = otsuBinarization(images(1))
+    val extracted = otsuBinarization(images(1)).scale(0.5)
     extracted.output(JpegWriter.Default, "extracted.jpg")
-    val processed = dilate(extracted)
+    val processed = Morph.dilate(Morph.erode(extracted)).scale(2)
     processed.output(JpegWriter.Default, "dilated.jpg")
     val full = extractForeground(images(1))
-    full.output(JpegWriter.Default, "full.jpg")
+    full.output(JpegWriter.Default, "done.jpg")
     //
     //    val combined = stitchImages(images)
     //
@@ -139,7 +90,7 @@ object Operation {
     assert(scaleFactor > 0)
     val transparent = new Color(1f, 1f, 1f, 1)
     val binarization = otsuBinarization(image).scale(1 / scaleFactor)
-    dilate(binarization).scale(scaleFactor).map(pixel =>
+    Morph.dilate(binarization).scale(scaleFactor).map(pixel =>
       if (pixelToIntensity(pixel) > 0) {
         image.pixel(pixel.x, pixel.y).toColor.awt()
       } else {
@@ -277,43 +228,6 @@ object Operation {
     continue(LoopVariables(0, weightForeground = pixelCount, 0, Double.NegativeInfinity, 0), (0 until 256).toList)
   }
 
-  /**
-   * Ensure image is grayscale. Dilates image by the structuring element.
-   *
-   * @param image the image to dilate morphologically
-   * @param shape the structuring element
-   * @return the dilated image
-   */
-  def dilate(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_MORPHOLOGY_SHAPE): ImmutableImage = {
-    val colors = image.pixels().map(_.toColor.toAWT)
-    val lifted: Int => Option[Color] = colors.lift
-
-    def getColor(p: (Int, Int)): Option[Color] = {
-      val (x, y) = p
-      lifted(y * image.width + x)
-    }
-
-    def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
-      val l = a._1 + b._1
-      val r = a._2 + b._2
-      l -> r
-    }
-
-    image.map { pixel =>
-
-      /**
-       * If there is a spot in the entity that is the background color (BLACK), convert it to white.
-       */
-      val coordinates = (pixel.x, pixel.y)
-      val isBackground = shape.map(addTuples(coordinates, _))
-        .flatMap(getColor)
-        .forall(_ == Color.BLACK)
-      if (isBackground)
-        Color.BLACK
-      else
-        Color.WHITE
-    }
-  }
 
   def pixelToIntensity(pixel: Pixel): Int = {
     (pixel.red() + pixel.blue() + pixel.green()) / 3
