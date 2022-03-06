@@ -1,5 +1,9 @@
 package nicoburniske.faxion.image.lib
 
+import cats.effect.Async
+import cats.syntax.all._
+import cats.{Applicative, Parallel}
+
 import scala.reflect.ClassTag
 
 /**
@@ -85,6 +89,12 @@ class PixelImage[@specialized A](
    */
   def mapWithIndex[B](f: (A, Int, Int) => B)(implicit tag: ClassTag[B]): PixelImage[B] =
     PixelImage(domain, (x, y) => f(this(x, y), x, y))
+
+  /**
+   */
+  def parMap[F[_]: Parallel: Async, B](f: A => B)(implicit tag: ClassTag[B]): F[PixelImage[B]] = {
+    Applicative[F].pure(mapLazy(f))
+  }
 
   /**
    * zip two images together into a single tupled image
@@ -298,9 +308,25 @@ private class ArrayImage[A: ClassTag](
   /**
    * apply a function to each pixel
    */
-  override def map[B](f: (A) => B)(implicit tag: ClassTag[B]): PixelImage[B] = {
-    val newData = data.toVector.map(f).toArray
+  override def map[B](f: A => B)(implicit tag: ClassTag[B]): PixelImage[B] = {
+    val newData = data.map(f)
     new ArrayImage[B](domain, accessMode = accessMode.map(f), data = newData)
+  }
+
+  // TODO: Test this.
+  override def parMap[F[_]: Parallel: Async, B](f: A => B)(implicit tag: ClassTag[B]): F[PixelImage[B]] = {
+    def handleAssignment(newArray: Array[B], index: Int): F[Unit] = {
+      for {
+        index  <- Async[F].pure(index)
+        atIndex = this(domain.x(index), domain.y(index))
+        _      <- Async[F].delay(newArray(index) = f(atIndex))
+      } yield ()
+    }
+
+    for {
+      newArray <- Async[F].delay(new Array[B](this.data.length))
+      _        <- Parallel.parTraverse(data.indices.asInstanceOf[Seq[Int]])(handleAssignment(newArray, _))
+    } yield new ArrayImage[B](domain, accessMode.map(f), newArray)
   }
 
   /**
