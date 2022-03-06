@@ -1,6 +1,8 @@
 package nicoburniske.faxion
 
 import cats.Parallel
+import cats.effect.kernel.Sync
+import cats.effect.std.Console
 import cats.effect.{Async, ExitCode, IO, IOApp}
 import cats.syntax.all._
 import com.sksamuel.scrimage.ImmutableImage
@@ -16,6 +18,8 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Text
 import org.http4s.{HttpRoutes, MediaType}
+import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 import scala.concurrent.duration._
 
@@ -24,7 +28,7 @@ object Server extends IOApp {
     ServerApp[IO].stream.compile.drain.as(ExitCode.Success)
 }
 
-class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
+class ServerApp[F[_]: Async: Parallel: Logger] extends Http4sDsl[F] {
   def routes(wsb: WebSocketBuilder2[F]): HttpRoutes[F] =
     HttpRoutes.of[F] {
       case GET -> Root / "hello"         =>
@@ -36,7 +40,7 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
               part.body.compile.to(Array).map(ImmutableImage.loader().fromBytes(_))
             }
           for {
-            _        <- multipart.parts.map(_.toString).foreach(println).pure
+            _        <- Logger[F].info(s"Received parts: ${multipart.parts.map(_.toString).mkString("\n")}")
             stitched <- OperationF[F].stitchImages(images)
             bytes     = stitched.bytes(JpegWriter.Default)
             stream    = Stream.chunk(Chunk.array(bytes))
@@ -50,8 +54,8 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
         val toClient: Stream[F, WebSocketFrame]       =
           Stream.awakeEvery[F](1.seconds).flatMap(d => Stream.apply(Text(s"Ping! $d"), Text(s"Yeet!")))
         val fromClient: Pipe[F, WebSocketFrame, Unit] = _.evalMap {
-          case Text(t, _) => Async[F].delay(println("response received " + t))
-          case _          => Async[F].delay(println("Received something else?!"))
+          case Text(t, _) => Logger[F].info("response received " + t)
+          case _          => Logger[F].info("Received something else?!")
         }
         wsb.build(toClient, fromClient)
     }
@@ -60,5 +64,6 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
     BlazeServerBuilder[F].bindHttp(8080).withHttpWebSocketApp(routes(_).orNotFound).serve
 }
 object ServerApp {
+  private implicit def logger[F[_]: Async]       = Slf4jLogger.getLoggerFromClass[F](ServerApp.getClass)
   def apply[F[_]: Async: Parallel]: ServerApp[F] = new ServerApp[F]
 }

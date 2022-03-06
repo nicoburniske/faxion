@@ -13,6 +13,7 @@ lazy val app = (project in file(".")).settings(
   libraryDependencies ++= Seq(
     "org.typelevel"         %% "cats-core"                     % "2.7.0",
     "org.typelevel"         %% "cats-effect"                   % "3.3.5",
+    "org.typelevel"         %% "log4cats-slf4j"                % "2.2.0",
     "org.scalactic"         %% "scalactic"                     % scalaTestVersion,
     "org.scalatest"         %% "scalatest"                     % scalaTestVersion % Test,
     "org.typelevel"         %% "cats-effect-testing-scalatest" % "1.4.0"          % Test,

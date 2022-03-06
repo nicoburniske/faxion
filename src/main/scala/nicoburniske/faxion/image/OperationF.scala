@@ -3,15 +3,17 @@ package nicoburniske.faxion.image
 import java.awt.Color
 import java.awt.image.BufferedImage
 
-import cats.effect.{Async, ExitCode, IO, IOApp}
+import cats.Parallel
+import cats.effect.{Async, Clock, ExitCode, IO, IOApp}
 import cats.syntax.all._
-import cats.{Defer, Parallel}
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.color.Colors
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
 
-class OperationF[F[_]: Async: Parallel: Defer] {
+class OperationF[F[_]: Async: Parallel: Logger: Clock] {
 
   /**
    * Stitch the images (of clothing articles) together to form a single "fit".
@@ -22,17 +24,15 @@ class OperationF[F[_]: Async: Parallel: Defer] {
    *   an stitched image
    */
   def stitchImages(images: Seq[F[ImmutableImage]]): F[ImmutableImage] = {
-    val elem                              = morph.circleElem(4)
-    val processed: F[Seq[ImmutableImage]] = images.map { image =>
-      extractForeground(image, elem).map(_.autocrop(Color.BLACK))
-    }.parSequence
-
     for {
-      images    <- processed
-      maxWidth   = images.map(_.width).max
-      height     = images.map(_.height).sum
-      blankImage = ImmutableImage.create(maxWidth, height)
-    } yield overlayImages(maxWidth, blankImage, images.toList)
+      structuringElem <- morph.circleElem(4).pure
+      extracted       <- images
+                           .map(image => extractForeground(image, structuringElem).map(_.autocrop(Color.BLACK)))
+                           .parSequence
+      maxWidth         = extracted.map(_.width).max
+      height           = extracted.map(_.height).sum
+      blankImage       = ImmutableImage.create(maxWidth, height)
+    } yield overlayImages(maxWidth, blankImage, extracted.toList)
   }
 
   @scala.annotation.tailrec
@@ -49,27 +49,27 @@ class OperationF[F[_]: Async: Parallel: Defer] {
     }
   }
 
-  def extractForeground(imageF: F[ImmutableImage], shape: Set[(Int, Int)]): F[ImmutableImage] = {
-    for {
-      srcImage  <- imageF
-      binarized  = Operation.otsuBinarization(srcImage)
-      processedF = binarized
-                     .pure
-                     .map(_.scale(0.5))
-                     .flatMap(dilateOrErode(_, shape, false))
-                     .flatMap(dilateOrErode(_, shape, true))
-                     .flatMap(dilateOrErode(_, shape, true))
-                     .flatMap(dilateOrErode(_, shape, false))
-                     .map(_.scale(2.0))
-      processed <- processedF
-      // TODO: see if pixel mutation (parallel?) is worth it.
-    } yield processed.map { pixel =>
-      if (pixelToIntensity(pixel) > 0) {
-        srcImage.pixel(pixel.x, pixel.y).toColor.awt()
-      } else {
-        // transparent pixel
-        Colors.Transparent.awt()
-      }
+  def extractForeground(imageF: F[ImmutableImage], shape: Set[(Int, Int)]): F[ImmutableImage] = for {
+    srcImage          <- imageF
+    _                 <- Logger[F].info(s"Processing image with ${srcImage.pixels.length} pixels")
+    binarized          = Operation.otsuBinarization(srcImage)
+    processedF         = binarized
+                           .pure
+                           .map(_.scale(0.5))
+                           .flatMap(dilateOrErode(_, shape, false))
+                           .flatMap(dilateOrErode(_, shape, true))
+                           .flatMap(dilateOrErode(_, shape, true))
+                           .flatMap(dilateOrErode(_, shape, false))
+                           .map(_.scale(2.0))
+    (time, processed) <- Clock[F].timed(processedF)
+    _                 <- Logger[F].info(s"Foreground extraction took ${time.toMillis}ms")
+    // TODO: see if pixel mutation (parallel?) is worth it.
+  } yield processed.map { pixel =>
+    if (pixelToIntensity(pixel) > 0) {
+      srcImage.pixel(pixel.x, pixel.y).toColor.awt()
+    } else {
+      // transparent pixel
+      Colors.Transparent.awt()
     }
   }
 
@@ -81,11 +81,9 @@ class OperationF[F[_]: Async: Parallel: Defer] {
     imageF.flatMap(dilateOrErode(_, shape, dilate))
 
   def dilateOrErode(image: ImmutableImage, shape: Set[(Int, Int)], dilate: Boolean): F[ImmutableImage] = {
-    val before                       = System.currentTimeMillis()
     val newImage                     = image.copy
     val awt                          = newImage.awt()
     val pixels                       = image.pixels()
-    println(s"pixels ${pixels.length}")
     val colors: Array[Color]         = pixels.map(_.toColor.toAWT)
     val lifted: Int => Option[Color] = colors.lift
 
@@ -102,7 +100,6 @@ class OperationF[F[_]: Async: Parallel: Defer] {
       }
 
     def handlePixel(p: Pixel): Unit = {
-      // println(Thread.currentThread().getName)
       val coordinates    = (p.x, p.y)
       val elementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
       val newColor       =
@@ -111,10 +108,15 @@ class OperationF[F[_]: Async: Parallel: Defer] {
         else
           Color.WHITE.getRGB
       awt.setRGB(p.x, p.y, newColor)
+
     }
 
-    val parallelSet = pixels.toSeq.map(p => Defer[F].defer(handlePixel(p).pure)).parSequence
-    parallelSet.map(_ => println(System.currentTimeMillis() - before)).as(newImage)
+    val handled = pixels.toSeq.map(p => Async[F].delay(handlePixel(p))).parSequence
+    for {
+      (time, _)    <- Clock[F].timed(handled)
+      operationName = if (dilate) "Dilation" else "Erosion"
+      _            <- Logger[F].info(s"$operationName took ${time.toMillis}ms")
+    } yield newImage
   }
 
   def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
@@ -152,7 +154,11 @@ class OperationF[F[_]: Async: Parallel: Defer] {
 }
 
 object OperationF extends IOApp {
-  def apply[F[_]: Async: Parallel]: OperationF[F] = new OperationF[F]
+  private implicit def logger[F[_]: Async]: SelfAwareStructuredLogger[F] =
+    Slf4jLogger.getLoggerFromClass[F](OperationF.getClass)
+  def apply[F[_]: Async: Parallel]: OperationF[F]                        = {
+    new OperationF[F]
+  }
 
   override def run(args: List[String]): IO[ExitCode] = {
     val path     = "example/fit2/pants.jpg"
