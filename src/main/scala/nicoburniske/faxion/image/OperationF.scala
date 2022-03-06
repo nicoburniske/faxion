@@ -1,16 +1,17 @@
 package nicoburniske.faxion.image
 
 import java.awt.Color
+import java.awt.image.BufferedImage
 
-import cats.Parallel
 import cats.effect.{Async, ExitCode, IO, IOApp}
 import cats.syntax.all._
+import cats.{Defer, Parallel}
 import com.sksamuel.scrimage.ImmutableImage
 import com.sksamuel.scrimage.color.Colors
 import com.sksamuel.scrimage.nio.JpegWriter
 import com.sksamuel.scrimage.pixels.Pixel
 
-class OperationF[F[_]: Async: Parallel] {
+class OperationF[F[_]: Async: Parallel: Defer] {
 
   /**
    * Stitch the images (of clothing articles) together to form a single "fit".
@@ -54,10 +55,12 @@ class OperationF[F[_]: Async: Parallel] {
       binarized  = Operation.otsuBinarization(srcImage)
       processedF = binarized
                      .pure
+                     .map(_.scale(0.5))
                      .flatMap(dilateOrErode(_, shape, false))
                      .flatMap(dilateOrErode(_, shape, true))
                      .flatMap(dilateOrErode(_, shape, true))
                      .flatMap(dilateOrErode(_, shape, false))
+                     .map(_.scale(2.0))
       processed <- processedF
       // TODO: see if pixel mutation (parallel?) is worth it.
     } yield processed.map { pixel =>
@@ -78,9 +81,11 @@ class OperationF[F[_]: Async: Parallel] {
     imageF.flatMap(dilateOrErode(_, shape, dilate))
 
   def dilateOrErode(image: ImmutableImage, shape: Set[(Int, Int)], dilate: Boolean): F[ImmutableImage] = {
+    val before                       = System.currentTimeMillis()
     val newImage                     = image.copy
     val awt                          = newImage.awt()
     val pixels                       = image.pixels()
+    println(s"pixels ${pixels.length}")
     val colors: Array[Color]         = pixels.map(_.toColor.toAWT)
     val lifted: Int => Option[Color] = colors.lift
 
@@ -96,24 +101,20 @@ class OperationF[F[_]: Async: Parallel] {
         !shapeApplied.forall(_ == Color.WHITE)
       }
 
-    def setNewPixel(pixels: Array[Pixel]): Unit = {
-      // println(s"${Thread.currentThread().getName} with ${pixels.length} to process")
-      pixels.foreach { p =>
-        val coordinates    = (p.x, p.y)
-        val elementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
-        val newColor       =
-          if (cond(elementApplied))
-            Color.BLACK.getRGB
-          else
-            Color.WHITE.getRGB
-        awt.setRGB(p.x, p.y, newColor)
-      }
+    def handlePixel(p: Pixel): Unit = {
+      // println(Thread.currentThread().getName)
+      val coordinates    = (p.x, p.y)
+      val elementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
+      val newColor       =
+        if (cond(elementApplied))
+          Color.BLACK.getRGB
+        else
+          Color.WHITE.getRGB
+      awt.setRGB(p.x, p.y, newColor)
     }
 
-    // TODO: how to decide parallelism?
-    val split: Seq[Array[Pixel]] = pixels.grouped(pixels.length / 10).toSeq
-    val parallelSetPixel         = split.map(_.pure).map(_.map(setNewPixel)).parSequence
-    parallelSetPixel.as(image)
+    val parallelSet = pixels.toSeq.map(p => Defer[F].defer(handlePixel(p).pure)).parSequence
+    parallelSet.map(_ => println(System.currentTimeMillis() - before)).as(newImage)
   }
 
   def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
@@ -121,20 +122,52 @@ class OperationF[F[_]: Async: Parallel] {
     val r = a._2 + b._2
     l -> r
   }
+
+  def withPixelImage(bf: BufferedImage): ImmutableImage = {
+////    val immut      = ImmutableImage.fromAwt(bf)
+////    val otsu       = Operation.otsuBinarization(immut)
+////    val pixelImage = ConverterDouble.toPixelImage(otsu.awt())
+//
+//    val size                  = 2
+////    val asSet                 = morph.squareElem(size).map(addTuples(_, (size + 1, size + 1)))
+////    println(asSet.mkString(", "))
+//    // val structuringElement: (Int, Int) => Boolean = asSet.contains(_, _)
+//    // val asFunc                                    = PixelImage(4, 4, structuringElement)
+//    val emptyImage            = PixelImage.apply(3, 3, (_, _) => 1.0)
+//    val erosionBox            = Erosion.box(2)
+//    val boxStructuringElement = MorphologicalFilter.boxElement(3)
+//    println(boxStructuringElement.toString)
+//    val boxDouble             = boxStructuringElement.map { p =>
+//      if (p) // 0 is black
+//        1.0
+//      else
+//        0.0
+//    }
+//    // val eroded                = Erosion.apply(boxStructuringElement).filter(pixelImage)
+//    // val asDouble                                  = asFunc.map(if (_) 1.0 else 0.0)
+//    val res                   = ConverterDouble.toBufferedImage(emptyImage)
+//    ImmutableImage.fromAwt(res)
+    ???
+  }
 }
 
 object OperationF extends IOApp {
   def apply[F[_]: Async: Parallel]: OperationF[F] = new OperationF[F]
 
   override def run(args: List[String]): IO[ExitCode] = {
-    val path     = "example/fit3/pants.jpg"
+    val path     = "example/fit2/pants.jpg"
     val loadFile = Loader.imageFromFile(path)
 
-    val before    = System.currentTimeMillis()
     val operation = OperationF[IO].extractForeground(loadFile, morph.DEFAULT_STRUCTURING_ELEMENT)
     operation
       .map(image => image.output(JpegWriter.Default, "parallel.jpg"))
-      .map(_ => println(System.currentTimeMillis() - before))
+      // .map(_ => println(System.currentTimeMillis() - before))
       .as(ExitCode.Success)
+//    val bf     = Loader.bufferedImageFromFile(path)
+//    val before = System.currentTimeMillis()
+//    bf.map(OperationF[IO].withPixelImage)
+//      .map(image => image.output(JpegWriter.Default, "withLibrary.jpg"))
+//      .map(_ => println(System.currentTimeMillis() - before))
+//      .as(ExitCode.Success)
   }
 }

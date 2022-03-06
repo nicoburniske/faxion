@@ -36,7 +36,7 @@ object Morph {
 
   private def dilateOrErode(
       image: ImmutableImage,
-      shape: Set[(Int, Int)] = DEFAULT_STRUCTURING_ELEMENT,
+      shape: Set[(Int, Int)],
       dilate: Boolean = true): ImmutableImage = {
     val colors                       = image.pixels().map(_.toColor.toAWT)
     val lifted: Int => Option[Color] = colors.lift

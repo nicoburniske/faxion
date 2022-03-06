@@ -14,9 +14,12 @@ object Operation {
   def main(args: Array[String]): Unit = {
     val images =
       Seq("example/fit3/pants.jpg", "example/fit3/shirt.jpg").map(ImmutableImage.loader.fromFile(_))
-    val full   = extractForeground(images(0), 4.0)
+    val before = System.currentTimeMillis()
+    val full   = extractForeground(images(0), 1.0)
+    println(System.currentTimeMillis() - before)
     full.output(JpegWriter.Default, "full.jpg")
   }
+  // 89842
 
   // TODO: Decide whether mutability has significant performance improvements.
   // TODO: Py implement
@@ -88,7 +91,6 @@ object Operation {
   }
 
   def otsuBinarization(image: ImmutableImage): ImmutableImage = {
-
     val histogram    = histogramFromImage(image)
     val intensitySum =
       histogram.zipWithIndex.map { case (value, index) => value * intensityToDouble(index) }.sum

@@ -31,13 +31,12 @@ class ServerApp[F[_]: Async: Parallel] extends Http4sDsl[F] {
         Ok("Hello world.")
       case req @ POST -> Root / "stitch" =>
         req.decodeWith(multipart[F], strict = true) { multipart =>
-          val images: Seq[F[ImmutableImage]] = multipart.parts
-            .filter(_.name.contains("images"))
-            .map { part: Part[F] =>
+          val images: Seq[F[ImmutableImage]] =
+            multipart.parts.sortWith(_.name < _.name).map { part: Part[F] =>
               part.body.compile.to(Array).map(ImmutableImage.loader().fromBytes(_))
             }
           for {
-            _        <- Async[F].delay(multipart.parts.map(_.toString).foreach(println))
+            _        <- multipart.parts.map(_.toString).foreach(println).pure
             stitched <- OperationF[F].stitchImages(images)
             bytes     = stitched.bytes(JpegWriter.Default)
             stream    = Stream.chunk(Chunk.array(bytes))

@@ -35,6 +35,8 @@ lazy val app = (project in file(".")).settings(
     "org.http4s"            %% "http4s-blaze-core"             % http4sVersion,
     "org.http4s"            %% "http4s-circe"                  % http4sVersion,
     "org.http4s"            %% "http4s-dsl"                    % http4sVersion
+    // Image processing.
+    // "ch.unibas.cs.gravis"   %% "scalismo-faces"                % "0.90.0"
   ),
   addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
 )
