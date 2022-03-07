@@ -1,12 +1,16 @@
 package nicoburniske.faxion.image
 
 import cats.Parallel
+import cats.effect.kernel.syntax.all._
 import cats.effect.{Async, Clock, ExitCode, IO, IOApp}
 import cats.syntax.all._
 import com.sksamuel.scrimage.pixels.Pixel
 import nicoburniske.faxion.image.lib.{IntRGB, PixelImage, PixelImageIO, RGB}
+import nicoburniske.faxion.image.morph.Morph
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.{Logger, SelfAwareStructuredLogger}
+
+import scala.concurrent.duration._
 
 class OperationF[F[_]: Async: Parallel: Logger: Clock] {
 
@@ -49,26 +53,33 @@ class OperationF[F[_]: Async: Parallel: Logger: Clock] {
 
   def extractForeground(imageF: F[PixelImage[IntRGB]], shape: Set[(Int, Int)]): F[PixelImage[IntRGB]] =
     for {
-      srcImage          <- imageF
-      _                 <- Logger[F].info(s"Processing image with ${srcImage.length} pixels")
-      binarized          = Operation.otsuBinarization(srcImage)
-      processedF         = binarized
-                             .pure
-                             .flatMap(dilateOrErode(_, shape, false))
-                             .flatMap(dilateOrErode(_, shape, true))
-                             .flatMap(dilateOrErode(_, shape, true))
-                             .flatMap(dilateOrErode(_, shape, false))
-      (time, processed) <- Clock[F].timed(processedF)
-      _                 <- Logger[F].info(s"Foreground extraction took ${time.toMillis}ms")
-      res               <- processed.zipWithIndex.parMap {
-                             case (pixel, (x, y)) =>
-                               if (pixel) {
-                                 srcImage(x, y)
-                               } else {
-                                 // TODO: what is background
-                                 IntRGB.Black
-                               }
-                           }
+      srcImage           <- imageF
+      _                  <- Logger[F].info(s"Processing image with ${srcImage.length} pixels")
+      (time, binarized)  <- Async[F].delay(Operation.otsuBinarization(srcImage)).timed
+      _                  <- Logger[F].info(s"Binarization took ${time.toMillis}ms")
+      // processedF          = binarized.pure.flatMap(dilateOrErode(_, shape, false))
+      processedF          = binarized.pure.map(Morph.erode(_, shape))
+      //                              .map(Morph.dilate(_, shape))
+      //                              .map(Morph.dilate(_, shape))
+      //                              .map(Morph.erode(_, shape))
+      //                                   .flatMap(dilateOrErode(_, shape, true))
+      //                                   .flatMap(dilateOrErode(_, shape, true))
+      //                                   .flatMap(dilateOrErode(_, shape, false))
+      (time, processed)  <- processedF.timed
+      _                  <- Logger[F].info(s"Foreground extraction took ${time.toMillis}ms")
+      convert             = Async[F].delay(
+                              processed.mapWithIndex {
+                                case (pixel, x, y) =>
+                                  if (pixel) {
+                                    srcImage(x, y)
+                                  } else {
+                                    // TODO: what is background
+                                    IntRGB.Black
+                                  }
+                              }
+                            )
+      (timeConvert, res) <- convert.timed
+      _                  <- Logger[F].info(s"Finished converting in ${timeConvert.toMillis} ms")
     } yield res
 
   def pixelToIntensity(pixel: Pixel): Int = {
@@ -109,7 +120,7 @@ class OperationF[F[_]: Async: Parallel: Logger: Clock] {
     }
 
     for {
-      (time, newImage) <- Clock[F].timed(applied)
+      (time, newImage) <- applied.timed
       operationName     = if (dilate) "Dilation" else "Erosion"
       _                <- Logger[F].info(s"$operationName took ${time.toMillis}ms")
     } yield newImage
@@ -125,19 +136,23 @@ class OperationF[F[_]: Async: Parallel: Logger: Clock] {
 object OperationF extends IOApp {
   private implicit def logger[F[_]: Async]: SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromClass[F](OperationF.getClass)
-  def apply[F[_]: Async: Parallel]: OperationF[F]                        = {
-    new OperationF[F]
-  }
+
+  def apply[F[_]: Async: Parallel]: OperationF[F] = new OperationF[F]
 
   override def run(args: List[String]): IO[ExitCode] = {
     val path                             = "example/fit3/pants.jpg"
     val loadFile: IO[PixelImage[RGB]]    = Loader.getPixelImageFromFile[RGB](path)
-    val asIntRGB: IO[PixelImage[IntRGB]] = loadFile.map { _.map(p => p.toIntRGB) }
+    val asIntRGB: IO[PixelImage[IntRGB]] = loadFile.map {
+      _.map(p => p.toIntRGB)
+    }
 
     val operation: IO[PixelImage[IntRGB]] =
       OperationF[IO].extractForeground(asIntRGB, morph.DEFAULT_STRUCTURING_ELEMENT)
-    operation.flatMap(image =>
-      IO(image.map(_.toRGB)).flatMap(asRGB =>
-        IO.fromTry(PixelImageIO.write(asRGB, "parallel2.jpg")).map(_ => ExitCode.Success)))
+
+    for {
+      result <- operation
+      asRGB   = result.map(p => p.toRGB)
+      _      <- IO.fromTry(PixelImageIO.write(asRGB, "parallel2.png")).timeout(10.seconds)
+    } yield ExitCode.Success
   }
 }

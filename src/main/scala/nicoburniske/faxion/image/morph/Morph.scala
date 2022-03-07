@@ -58,9 +58,10 @@ object Morph {
         !shapeApplied.forall(identity)
       }
 
-    image.zipWithIndex.map {
-      case (_, coordinates) =>
-        val structuringElementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
+    image.mapWithIndex {
+      case (_, x, y) =>
+        val coordinate                = (x, y)
+        val structuringElementApplied = shape.map(addTuples(coordinate, _)).flatMap(getColor)
         cond(structuringElementApplied)
     }
   }
