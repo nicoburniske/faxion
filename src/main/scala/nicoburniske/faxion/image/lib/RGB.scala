@@ -5,6 +5,8 @@ import java.awt.Color
 case class RGB(r: Double, g: Double, b: Double) {
   def isInBounds: Boolean = r >= 0.0 && r <= 1.0 && g >= 0.0 && g <= 1.0 && b >= 0.0 && b <= 1.0
 
+  lazy val toIntRGB: IntRGB = IntRGB(this)
+
   def sum: Double = r + g + b
 
   /**

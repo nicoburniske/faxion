@@ -8,6 +8,7 @@ import cats.effect.IO
 import cats.effect.kernel.Resource
 import com.sksamuel.scrimage.ImmutableImage
 import javax.imageio.ImageIO
+import nicoburniske.faxion.image.lib.{BufferedImageConverter, PixelImage}
 
 object Loader {
   def imageFromFile(path: String): IO[ImmutableImage] = {
@@ -16,6 +17,10 @@ object Loader {
 
   def bufferedImageFromFile(path: String): IO[BufferedImage] = {
     getFileContentStream(path).use(r => IO(loadBufferedImageFromInputStream(r)))
+  }
+
+  def getPixelImageFromFile[T](path: String)(implicit bf: BufferedImageConverter[T]): IO[PixelImage[T]] = {
+    bufferedImageFromFile(path).map(bf.toPixelImage)
   }
 
   def getUrlContentStream(url: String): Resource[IO, InputStream] = {

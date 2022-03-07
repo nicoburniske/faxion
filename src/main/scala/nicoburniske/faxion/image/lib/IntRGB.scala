@@ -8,7 +8,7 @@ case class IntRGB(r: Int, g: Int, b: Int) {
   def isInBounds: Boolean                      = isChannelInBounds(r) && isChannelInBounds(g) && isChannelInBounds(b)
   def sum: Int                                 = r + g + b
 
-  def gray: Int      = sum / 3
+  val gray: Int      = sum / 3
   def luminance: Int = ((0.3 * r) + (0.59 * g) + (0.11 * b)).toInt
 
   /**

@@ -5,10 +5,9 @@ import cats.effect.kernel.Sync
 import cats.effect.std.Console
 import cats.effect.{Async, ExitCode, IO, IOApp}
 import cats.syntax.all._
-import com.sksamuel.scrimage.ImmutableImage
-import com.sksamuel.scrimage.nio.JpegWriter
 import fs2.{Chunk, Pipe, Stream}
-import nicoburniske.faxion.image.OperationF
+import nicoburniske.faxion.image.{Loader, OperationF}
+import nicoburniske.faxion.image.lib.{IntRGB, PixelImage, RGB}
 import org.http4s.EntityDecoder.multipart
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.dsl.Http4sDsl
@@ -35,20 +34,26 @@ class ServerApp[F[_]: Async: Parallel: Logger] extends Http4sDsl[F] {
         Ok("Hello world.")
       case req @ POST -> Root / "stitch" =>
         req.decodeWith(multipart[F], strict = true) { multipart =>
-          val images: Seq[F[ImmutableImage]] =
+          val images: Seq[F[PixelImage[IntRGB]]] =
             multipart.parts.sortWith(_.name < _.name).map { part: Part[F] =>
-              part.body.compile.to(Array).map(ImmutableImage.loader().fromBytes(_))
+              // part.body.compile.to(Array).map( ii => Loader.)
+              null
+              PixelImage.apply(0, 0, (_, _) => IntRGB.Black).pure
             }
           for {
-            _        <- Logger[F].info(s"Received parts: ${multipart.parts.map(_.toString).mkString("\n")}")
-            stitched <- OperationF[F].stitchImages(images)
-            bytes     = stitched.bytes(JpegWriter.Default)
-            stream    = Stream.chunk(Chunk.array(bytes))
+            _ <- Logger[F].info(s"Received parts: ${multipart.parts.map(_.toString).mkString("\n")}")
+
+//            stitched <- OperationF[F].stitchImages(images)
+//            bytes     = stitched.bytes(JpegWriter.Default)
+            // stream    = Stream.chunk(Chunk.array(bytes))
+            stream    = Stream.empty
             response <- Ok("images stitched successfully")
           } yield response
             .withBodyStream(stream)
             .withContentType(`Content-Type`(MediaType.image.jpeg))
-            .putHeaders(`Content-Length`(bytes.length))
+            // .putHeaders(`Content-Length`(bytes.length))
+            .putHeaders(`Content-Length`(0))
+
         }
       case GET -> Root / "ws"            =>
         val toClient: Stream[F, WebSocketFrame]       =
@@ -64,6 +69,7 @@ class ServerApp[F[_]: Async: Parallel: Logger] extends Http4sDsl[F] {
     BlazeServerBuilder[F].bindHttp(8080).withHttpWebSocketApp(routes(_).orNotFound).serve
 }
 object ServerApp {
-  private implicit def logger[F[_]: Async]       = Slf4jLogger.getLoggerFromClass[F](ServerApp.getClass)
-  def apply[F[_]: Async: Parallel]: ServerApp[F] = new ServerApp[F]
+  private implicit def logger[F[_]: Async]: SelfAwareStructuredLogger[F] =
+    Slf4jLogger.getLoggerFromClass[F](ServerApp.getClass)
+  def apply[F[_]: Async: Parallel]: ServerApp[F]                         = new ServerApp[F]
 }

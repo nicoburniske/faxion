@@ -75,6 +75,7 @@ object BufferedImageConverter {
       buffer.toImage
     }
   }
+  // TODO: add bufferedimageconverter for IntRGB
 
   /**
    * convert between PixelImage[RGB] and BufferedImage

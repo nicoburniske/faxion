@@ -3,6 +3,7 @@ package nicoburniske.faxion.image.lib
 import java.awt.image.BufferedImage
 import java.io.{File, FileOutputStream, IOException, InputStream, OutputStream}
 
+import cats.effect.IO
 import javax.imageio.stream.MemoryCacheImageOutputStream
 import javax.imageio.{IIOImage, ImageWriteParam}
 
@@ -39,6 +40,11 @@ object PixelImageIO {
       converter.toPixelImage(img)
     }
 
+  def write[Pixel](image: PixelImage[Pixel], file: String)(
+      implicit converter: BufferedImageConverter[Pixel]): Try[Unit] = {
+    write(image, new File(file))
+  }
+
   /**
    * write image to a file
    */
@@ -50,7 +56,8 @@ object PixelImageIO {
         javax.imageio.ImageIO.write(bufImage, "png", file)
       case f if f.getAbsolutePath.toLowerCase.endsWith(".jpg") =>
         writeJPEGToStream(bufImage, new FileOutputStream(file), 1.0f)
-      case _                                                   => throw new IOException("Unknown image format: " + file.getName)
+      case _                                                   =>
+        throw new IOException("Unknown image format: " + file.getName)
     }
   }
 

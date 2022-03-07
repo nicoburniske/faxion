@@ -26,6 +26,14 @@ class PixelImage[@specialized A](
     if (domain.isDefinedAt(x, y)) valueAt(x, y) else accessMode.outsideAccess(x, y, this)
 
   /**
+   * access image at array index
+   */
+  def apply(x: Int): A =
+    apply(domain.x(x), domain.y(x))
+
+  def contains(x: Int, y: Int): Boolean = domain.isDefinedAt(x, y)
+
+  /**
    * direct raw access of image value at (x, y) - unchecked!
    */
   def valueAt(x: Int, y: Int): A = f(x, y)
@@ -78,6 +86,9 @@ class PixelImage[@specialized A](
    * apply a function to each pixel
    */
   def map[B](f: A => B)(implicit tag: ClassTag[B]): PixelImage[B] = mapLazy(f).buffer
+
+  def foreach[B](f: A => Unit): Unit = ???
+  // TODO: Implement
 
   /**
    * apply a function to each pixel
@@ -135,6 +146,15 @@ class PixelImage[@specialized A](
       i += 1
     }
     acc
+  }
+
+  def count(p: A => Boolean): Int = {
+    this.foldLeft(0) { (sum, item) =>
+      if (p(item))
+        sum + 1
+      else
+        sum
+    }
   }
 
   val isBuffered = false

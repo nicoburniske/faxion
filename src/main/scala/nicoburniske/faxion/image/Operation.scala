@@ -1,10 +1,7 @@
 package nicoburniske.faxion.image
 
-import java.awt.Color
-
 import com.sksamuel.scrimage.ImmutableImage
-import com.sksamuel.scrimage.nio.JpegWriter
-import com.sksamuel.scrimage.pixels.Pixel
+import nicoburniske.faxion.image.lib.{IntRGB, PixelImage, RGB}
 import nicoburniske.faxion.image.morph.Morph
 import nicoburniske.faxion.model.Article
 
@@ -12,26 +9,18 @@ import scala.annotation.tailrec
 
 object Operation {
   def main(args: Array[String]): Unit = {
-    val images =
-      Seq("example/fit3/pants.jpg", "example/fit3/shirt.jpg").map(ImmutableImage.loader.fromFile(_))
-    val before = System.currentTimeMillis()
-    val full   = extractForeground(images(0), 1.0)
-    println(System.currentTimeMillis() - before)
-    full.output(JpegWriter.Default, "full.jpg")
+    //    val images =
+    //      Seq("example/fit3/pants.jpg", "example/fit3/shirt.jpg").map(PixelImageIO.getPixelImageFromFile[RGB](_))
+    //    val before = System.currentTimeMillis()
+    //    val full = extractForeground(images(0), 1.0)
+    //    println(System.currentTimeMillis() - before)
+    //    PixelImageIO.write(full, "full.jpg")
   }
+
   // 89842
 
   // TODO: Decide whether mutability has significant performance improvements.
   // TODO: Py implement
-  /**
-   * Stitch the images (of clothing articles) together to form a single "fit".
-   *
-   * @param images
-   *   the images of individual clothing articles
-   * @return
-   *   an stitched image
-   */
-  def stitchImagesWithTags(images: Seq[(ImmutableImage, Article)]): ImmutableImage = ???
 
   /**
    * Stitch the images (of clothing articles) together to form a single "fit".
@@ -41,35 +30,37 @@ object Operation {
    * @return
    *   an stitched image
    */
-  def stitchImages(images: Seq[ImmutableImage]): ImmutableImage = {
+  def stitchImages(images: Seq[PixelImage[IntRGB]]): PixelImage[IntRGB] = {
     // @formatter:off
     val maxWidth   = images.map(_.width).max
     val height     = images.map(_.height).sum
 
-    @scala.annotation.tailrec
-    def overlayImages(background: ImmutableImage, toOverlay: List[ImmutableImage], height: Int = 0): ImmutableImage = {
+    // @scala.annotation.tailrec
+    def overlayImages(background: PixelImage[IntRGB], toOverlay: List[PixelImage[IntRGB]], height: Int = 0): PixelImage[IntRGB] = {
       toOverlay match {
         case Nil => background
         case ::(image, restImages) =>
-          val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
-          overlayImages(newBackground, restImages, height + image.height)
+//          val newBackground = background.overlay(image, (maxWidth - image.width) / 2, height)
+//          overlayImages(newBackground, restImages, height + image.height)
+          // TODO add overlay
+          background
       }
     }
 
     val processedImages = images
       .map(extractForeground(_))
       // .tapEach(i => i.output(JpegWriter.Default, s"${i.hashCode}-test.jpg" )) // For debugging.
-      .map(_.autocrop)
+      // .map(_.autocrop) // TODO: FIX
 
-    val blankImage = ImmutableImage.create(maxWidth, height)
-    overlayImages(blankImage, processedImages.toList)
+    val empty = PixelImage.apply(maxWidth, height, (_, _) => IntRGB.Black)
+    overlayImages(empty, processedImages.toList)
     // @formatter:on
   }
 
-  def extractForeground(image: ImmutableImage, scaleFactor: Double = 2.0): ImmutableImage = {
+  // TODO: Scalefactor
+  def extractForeground(image: PixelImage[IntRGB], scaleFactor: Double = 2.0): PixelImage[IntRGB] = {
     assert(scaleFactor > 0)
-    val transparent  = new Color(1f, 1f, 1f, 1)
-    val binarization = otsuBinarization(image).scale(1 / scaleFactor)
+    val binarization = otsuBinarization(image)
     val threadName   = Thread.currentThread.getName
     println(s"$threadName-1")
     val processed    = Morph.erode(binarization)
@@ -79,60 +70,57 @@ object Operation {
     val processed3   = Morph.dilate(processed2)
     println(s"$threadName-4")
     val processed4   = Morph.erode(processed3)
-    processed4
-      .scale(scaleFactor)
-      .map(pixel =>
-        if (pixelToIntensity(pixel) > 0) {
-          image.pixel(pixel.x, pixel.y).toColor.awt()
+    processed4.zipWithIndex.map {
+      case (isForeground, (x, y)) =>
+        if (isForeground) {
+          image.valueAt(x, y)
         } else {
           // transparent pixel
-          transparent
-        })
+          // TODO : make transparent
+          IntRGB.Black
+        }
+    }
   }
 
-  def otsuBinarization(image: ImmutableImage): ImmutableImage = {
+  def otsuBinarization(image: PixelImage[IntRGB]): PixelImage[Boolean] = {
     val histogram    = histogramFromImage(image)
     val intensitySum =
       histogram.zipWithIndex.map { case (value, index) => value * intensityToDouble(index) }.sum
     val threshold    = calcThreshold(histogram, image.width * image.height, intensitySum)
     val intThreshold = (threshold * 256).toInt
 
-    val initialResult = image.map { pixel =>
-      if (pixelToIntensity(pixel) > intThreshold) // Foreground
-        Color.WHITE
-      else                                        // Background.
-        Color.BLACK
-    }
+    val initialResult = image.map { pixel => pixel.gray > intThreshold }
 
     // Calculate a quarter-sized sub-image, centered around the original image's center
     // Set the foreground (white) to whatever group has majority values of the sub-image
 
-    val resultSubimage =
-      initialResult.subimage(image.width / 4, image.width / 4, image.width / 2, image.height / 2)
+    //    val resultSubimage =
+    //      initialResult.subimage(image.width / 4, image.width / 4, image.width / 2, image.height / 2)
+    //
+    //    val whiteCount = resultSubimage.pixels().count(_.toColor.awt() == Color.WHITE)
+    //
+    //    if (whiteCount < (resultSubimage.width * resultSubimage.height) - whiteCount) {
+    //      initialResult.map(pixel => {
+    //        if (pixel.toColor.awt() == Color.WHITE) {
+    //          Color.BLACK
+    //        } else {
+    //          Color.WHITE
+    //        }
+    //
+    //      })
+    //
+    //    } else {
+    //      initialResult
+    //    }
 
-    val whiteCount = resultSubimage.pixels().count(_.toColor.awt() == Color.WHITE)
-
-    if (whiteCount < (resultSubimage.width * resultSubimage.height) - whiteCount) {
-      initialResult.map(pixel => {
-        if (pixel.toColor.awt() == Color.WHITE) {
-          Color.BLACK
-        } else {
-          Color.WHITE
-        }
-
-      })
-
-    } else {
-      initialResult
-    }
-
+    initialResult
   }
 
-  def histogramFromImage(image: ImmutableImage): Array[Int] = {
+  def histogramFromImage(image: PixelImage[IntRGB]): Array[Int] = {
     val intensityCounts = new Array[Int](256)
-    image.forEach { pixel =>
-      val pixelIntensity = pixelToIntensity(pixel)
-      intensityCounts(pixelIntensity) = intensityCounts(pixelIntensity) + 1
+    image.map { pixel =>
+      intensityCounts(pixel.gray) = intensityCounts(pixel.gray) + 1
+      ()
     }
     intensityCounts
   }
@@ -194,12 +182,12 @@ object Operation {
       (0 until 256).toList)
   }
 
-  def pixelToIntensity(pixel: Pixel): Int = {
-    (pixel.red() + pixel.blue() + pixel.green()) / 3
+  // TODO FIX.
+  def pixelToIntensity(pixel: IntRGB): Int = {
+    (pixel.r + pixel.g + pixel.b) / 3
   }
 
   def intensityToDouble(intensity: Int): Double = {
     intensity / 255.0
   }
-
 }

@@ -1,8 +1,6 @@
 package nicoburniske.faxion.image.morph
 
-import java.awt.Color
-
-import com.sksamuel.scrimage.ImmutableImage
+import nicoburniske.faxion.image.lib.PixelImage
 
 object Morph {
 
@@ -16,7 +14,9 @@ object Morph {
    * @return
    *   the dilated image
    */
-  def dilate(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_STRUCTURING_ELEMENT): ImmutableImage = {
+  def dilate(
+      image: PixelImage[Boolean],
+      shape: Set[(Int, Int)] = DEFAULT_STRUCTURING_ELEMENT): PixelImage[Boolean] = {
     dilateOrErode(image, shape)
   }
 
@@ -30,42 +30,44 @@ object Morph {
    * @return
    *   the dilated image
    */
-  def erode(image: ImmutableImage, shape: Set[(Int, Int)] = DEFAULT_STRUCTURING_ELEMENT): ImmutableImage = {
+  def erode(
+      image: PixelImage[Boolean],
+      shape: Set[(Int, Int)] = DEFAULT_STRUCTURING_ELEMENT): PixelImage[Boolean] = {
     dilateOrErode(image, shape, dilate = false)
   }
 
   private def dilateOrErode(
-      image: ImmutableImage,
+      image: PixelImage[Boolean],
       shape: Set[(Int, Int)],
-      dilate: Boolean = true): ImmutableImage = {
-    val colors                       = image.pixels().map(_.toColor.toAWT)
-    val lifted: Int => Option[Color] = colors.lift
+      dilate: Boolean = true): PixelImage[Boolean] = {
 
-    def getColor(p: (Int, Int)): Option[Color] = {
+    def getColor(p: (Int, Int)): Option[Boolean] = {
+      // TODO: make this better. Is there an option getter?
       val (x, y) = p
-      lifted(y * image.width + x)
-    }
-
-    def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
-      val l = a._1 + b._1
-      val r = a._2 + b._2
-      l -> r
-    }
-
-    def cond(shapeApplied: Iterable[Color]): Boolean =
-      if (dilate) {
-        shapeApplied.forall(_ == Color.BLACK)
+      if (image.contains(x, y)) {
+        Some(image(x, y))
       } else {
-        !shapeApplied.forall(_ == Color.WHITE)
+        None
+      }
+    }
+
+    def cond(shapeApplied: Iterable[Boolean]): Boolean =
+      if (dilate) {
+        shapeApplied.forall(!_)
+      } else {
+        !shapeApplied.forall(identity)
       }
 
-    image.map { pixel =>
-      val coordinates               = (pixel.x, pixel.y)
-      val structuringElementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
-      if (cond(structuringElementApplied))
-        Color.BLACK
-      else
-        Color.WHITE
+    image.zipWithIndex.map {
+      case (_, coordinates) =>
+        val structuringElementApplied = shape.map(addTuples(coordinates, _)).flatMap(getColor)
+        cond(structuringElementApplied)
     }
+  }
+
+  def addTuples(a: (Int, Int), b: (Int, Int)): (Int, Int) = {
+    val l = a._1 + b._1
+    val r = a._2 + b._2
+    l -> r
   }
 }
